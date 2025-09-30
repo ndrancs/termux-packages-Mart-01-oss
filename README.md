@@ -1,5 +1,7 @@
 # Termux packages
 
+script to build leeago wrapper inside tetmux
+
 ![GitHub repo size](https://img.shields.io/github/repo-size/termux/termux-packages)
 [![Packages last build status](https://github.com/termux/termux-packages/actions/workflows/packages.yml/badge.svg?branch=master)](https://github.com/termux/termux-packages/actions)
 [![Docker image status](https://github.com/termux/termux-packages/workflows/Docker%20image/badge.svg)](https://hub.docker.com/r/termux/package-builder)
