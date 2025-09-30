@@ -1,0 +1,12 @@
+export NDK=/data/data/com.termux/files/home/android-ndk-r27b
+export NDK_HOME=~/android-ndk-r27b
+export TOOLCHAIN=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+export TARGET=aarch64-linux-android
+export API=21  # or higher
+export AR=$TOOLCHAIN/bin/llvm-ar
+export CC=$TOOLCHAIN/bin/$TARGET$API-clang
+export CXX=$TOOLCHAIN/bin/$TARGET$API-clang++
+export LD=$TOOLCHAIN/bin/ld
+export RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+export STRIP=$TOOLCHAIN/bin/llvm-strip
+bash -c "NDK=~/android-ndk-r27b ./build-package.sh --library bionic wine-stable -s -F"
