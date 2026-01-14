@@ -1,4 +1,4 @@
-androidide-tools
+# androidide-tools (not in official termux-main repo; requires custom repo)
 apr-util
 apr
 apt-file
@@ -139,7 +139,7 @@ openjdk-17
 openjdk-21
 openjpeg
 openssh
-openssl-1.1
+# openssl-1.1 (removed from official repo; use openssl)
 openssl
 patch
 pcre2
