@@ -20,6 +20,8 @@ KEEP_CHANGES="${KEEP_CHANGES:-0}"
 DRY_RUN=0
 SETUP_ANDROID_SDK=1
 PACKAGES_FILE_DEFAULT="scripts/neonide-bootstrap-packages.txt"
+# By default, build only the core bootstrap package set.
+# Use --packages-file to include extra packages.
 PACKAGES_FILE=""
 # Optionally set TMPDIR for container-side temp files.
 # Some environments (especially CI) may have more free space in /tmp.
@@ -36,8 +38,8 @@ Options:
   --no-android10        Build legacy (Android <10) bootstrap (disables --android10).
   --force               Pass -f to scripts/build-bootstraps.sh (force rebuild).
   --packages-file <path> Newline-separated list of extra packages to include.
-                        Default: ${PACKAGES_FILE_DEFAULT}
                         (comments/empty lines are ignored)
+                        If not provided, builds ONLY the core bootstrap package set.
   --dry-run             Patch properties.sh and print the docker command, but do not run it.
   --no-setup-android-sdk Skip automatic Android SDK/NDK setup inside docker.
   --tmpdir-in-container <path> Set TMPDIR inside docker container (e.g. /tmp)
@@ -101,9 +103,10 @@ restore_props() {
 }
 trap restore_props EXIT
 
-# Replace the first occurrence of TERMUX_APP__PACKAGE_NAME="..."
-# (matches the default assignment line in properties.sh)
-perl -0777 -i -pe 's/TERMUX_APP__PACKAGE_NAME="[^"]+"/TERMUX_APP__PACKAGE_NAME="'"$APP_PACKAGE"'"/s' "$PROPS"
+# Replace TERMUX_APP__PACKAGE_NAME="..." in scripts/properties.sh.
+# Use sed (avoid depending on perl being installed on the host).
+# This is safe because properties.sh defines TERMUX_APP__PACKAGE_NAME once.
+sed -i -E "s/^(TERMUX_APP__PACKAGE_NAME=)\"[^\"]*\"/\1\"${APP_PACKAGE//\//\\/}\"/" "$PROPS"
 
 # Sanity check
 if ! grep -q "TERMUX_APP__PACKAGE_NAME=\"$APP_PACKAGE\"" "$PROPS"; then
@@ -114,13 +117,10 @@ fi
 echo "[*] Building bootstrap for app package: $APP_PACKAGE"
 echo "[*] Architecture: $ARCH"
 
-# If a packages file was provided (or exists at default path), pass it as --add.
+# If a packages file was provided, pass it as --add.
 # Note: scripts/build-bootstraps.sh will still build the minimal/core set;
 # this only controls the additional packages.
 PACKAGES_CSV=""
-if [[ -z "$PACKAGES_FILE" && -f "$PACKAGES_FILE_DEFAULT" ]]; then
-  PACKAGES_FILE="$PACKAGES_FILE_DEFAULT"
-fi
 if [[ -n "$PACKAGES_FILE" ]]; then
   if [[ ! -f "$PACKAGES_FILE" ]]; then
     echo "ERROR: packages file not found: $PACKAGES_FILE" >&2

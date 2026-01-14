@@ -16,10 +16,11 @@ on:
         required: false
         type: boolean
         default: true
-      packages_file:
-        description: "Newline-separated package list file to pass to the bootstrap builder"
+      include_extra_packages:
+        description: "Include extra packages from scripts/neonide-bootstrap-packages.txt"
         required: false
-        default: "scripts/neonide-bootstrap-packages.txt"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -44,8 +45,11 @@ jobs:
           args=(
             --app-package "${{ inputs.app_package }}"
             --arch "${{ inputs.arch }}"
-            --packages-file "${{ inputs.packages_file }}"
           )
+
+          if [ "${{ inputs.include_extra_packages }}" = "true" ]; then
+            args+=(--packages-file scripts/neonide-bootstrap-packages.txt)
+          fi
 
           if [ "${{ inputs.android10 }}" != "true" ]; then
             args+=(--no-android10)
