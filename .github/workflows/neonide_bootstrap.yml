@@ -1,0 +1,61 @@
+name: Build NeonIDE bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_package:
+        description: "Android applicationId/package name"
+        required: false
+        default: "com.neonide.studio"
+      arch:
+        description: "Architecture to build"
+        required: false
+        default: "aarch64"
+      android10:
+        description: "Build Android 10+ bootstrap"
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # build-neonide-bootstrap.sh uses scripts/run-docker.sh internally.
+      - name: Build bootstrap zip
+        run: |
+          set -euo pipefail
+
+          args=(
+            --app-package "${{ inputs.app_package }}"
+            --arch "${{ inputs.arch }}"
+          )
+
+          if [ "${{ inputs.android10 }}" != "true" ]; then
+            args+=(--no-android10)
+          fi
+
+          ./build-neonide-bootstrap.sh "${args[@]}"
+
+      - name: List produced zips
+        run: |
+          set -euo pipefail
+          ls -lah ./*.zip
+
+      - name: Upload bootstrap zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: neonide-bootstrap-${{ inputs.arch }}-${{ github.sha }}
+          path: bootstrap-*.zip
+          if-no-files-found: error
