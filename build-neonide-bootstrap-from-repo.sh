@@ -3,12 +3,14 @@ set -euo pipefail
 
 # Build a Termux bootstrap zip for a forked app package name WITHOUT compiling packages.
 #
-# This script:
-# 1) Runs scripts/generate-bootstraps.sh to download needed .deb files from a repository
-#    and assemble a bootstrap zip.
-# 2) Patches the produced bootstrap zip to use the requested app package name.
+# This script runs fully inside the Termux package-builder docker container (scripts/run-docker.sh)
+# so it works on hosts without the required tooling and matches the environment expected by
+# termux-packages scripts.
 #
-# This avoids running the full package build toolchain and drastically reduces disk usage.
+# It does:
+# 1) Run scripts/generate-bootstraps.sh to download needed .deb files from a repository
+#    and assemble a bootstrap zip.
+# 2) Patch the produced bootstrap zip to use the requested Android applicationId/package name.
 
 APP_PACKAGE="com.neonide.studio"
 ARCH="aarch64"
@@ -34,12 +36,13 @@ Options:
                           Default: ${PACKAGE_LIST_FILE_DEFAULT}
   --repo <url>            Override repository base url used by generate-bootstraps.sh.
                           Default: ${DEFAULT_REPO_URL}
-  --keep-tmp              Do not delete temporary working dir.
+  --keep-tmp              Do not delete temporary working dir (inside docker container).
   -h, --help              Show this help.
 
 Notes:
   - scripts/generate-bootstraps.sh always includes the minimal core set.
   - Your package list is added on top via --add, and dependencies are downloaded automatically.
+  - This script runs in docker via ./scripts/run-docker.sh.
 
 Example:
   $0 --app-package com.neonide.studio --arch aarch64
@@ -63,7 +66,12 @@ done
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-# Resolve packages file relative to repo root if needed.
+if [[ ! -x "$REPO_ROOT/scripts/run-docker.sh" ]]; then
+  echo "ERROR: scripts/run-docker.sh not found or not executable. Are you in termux-packages repo root?" >&2
+  exit 1
+fi
+
+# Resolve packages file relative to repo root for passing into container.
 if [[ "$PACKAGE_LIST_FILE" != /* ]]; then
   PACKAGE_LIST_FILE="$REPO_ROOT/$PACKAGE_LIST_FILE"
 fi
@@ -73,24 +81,65 @@ if [[ ! -f "$PACKAGE_LIST_FILE" ]]; then
   exit 1
 fi
 
-# Turn newline list into comma-separated list for --add.
-# Also strip empty lines and comments.
-PKGS_CSV="$(grep -vE '^[[:space:]]*(#|$)' "$PACKAGE_LIST_FILE" | tr '\n' ',' | sed 's/,$//')"
+# Prefer a repo-relative path so it maps cleanly into the container mount.
+# If realpath --relative-to is unavailable, fall back to stripping REPO_ROOT prefix.
+if PACKAGE_LIST_FILE_REL="$(realpath --relative-to "$REPO_ROOT" "$PACKAGE_LIST_FILE" 2>/dev/null)"; then
+  :
+else
+  PACKAGE_LIST_FILE_REL="${PACKAGE_LIST_FILE#"$REPO_ROOT/"}"
+fi
 
-# Determine repo url.
 if [[ -z "$REPO_URL" ]]; then
   REPO_URL="$DEFAULT_REPO_URL"
 fi
 
+echo "[*] Running bootstrap generation inside docker container"
+echo "[*] App package: $APP_PACKAGE"
+echo "[*] Arch: $ARCH"
+echo "[*] Android10: $ANDROID10"
+echo "[*] Packages file: $PACKAGE_LIST_FILE_REL"
+echo "[*] Repo: $REPO_URL"
+
+# Everything below runs inside the docker container. The repository is mounted at:
+#   /home/builder/termux-packages
+# See scripts/run-docker.sh.
+
+"$REPO_ROOT/scripts/run-docker.sh" env \
+  APP_PACKAGE="$APP_PACKAGE" \
+  ARCH="$ARCH" \
+  ANDROID10="$ANDROID10" \
+  PACKAGE_LIST_FILE="$PACKAGE_LIST_FILE_REL" \
+  REPO_URL="$REPO_URL" \
+  KEEP_TMP="$KEEP_TMP" \
+  bash -lc '
+set -euo pipefail
+
+REPO_ROOT="$HOME/termux-packages"
+cd "$REPO_ROOT"
+
+PACKAGE_LIST_FILE_PATH="$PACKAGE_LIST_FILE"
+if [[ "$PACKAGE_LIST_FILE_PATH" != /* ]]; then
+  PACKAGE_LIST_FILE_PATH="$REPO_ROOT/$PACKAGE_LIST_FILE_PATH"
+fi
+
+if [[ ! -f "$PACKAGE_LIST_FILE_PATH" ]]; then
+  echo "ERROR: packages file not found in container: $PACKAGE_LIST_FILE_PATH" >&2
+  exit 1
+fi
+
+# Turn newline list into comma-separated list for --add.
+# Also strip empty lines and comments.
+PKGS_CSV="$(grep -vE "^[[:space:]]*(#|$)" "$PACKAGE_LIST_FILE_PATH" | tr "\n" "," | sed "s/,$//")"
+
 if [[ -z "$PKGS_CSV" ]]; then
-  echo "ERROR: package list is empty: $PACKAGE_LIST_FILE" >&2
+  echo "ERROR: package list is empty: $PACKAGE_LIST_FILE_PATH" >&2
   exit 1
 fi
 
 tmpdir="$(mktemp -d -t neonide-bootstrap.XXXXXX)"
 cleanup() {
-  if [[ "$KEEP_TMP" == "1" ]]; then
-    echo "[*] KEEP_TMP=1: temp dir preserved at: $tmpdir"
+  if [[ "${KEEP_TMP:-0}" == "1" ]]; then
+    echo "[*] KEEP_TMP=1: temp dir preserved at (inside container): $tmpdir"
     return 0
   fi
   rm -rf "$tmpdir"
@@ -117,11 +166,11 @@ while IFS= read -r pkg; do
   if ! grep -q "^Package: ${pkg}$" "$index_file"; then
     missing+=("$pkg")
   fi
-done < <(grep -vE '^[[:space:]]*(#|$)' "$PACKAGE_LIST_FILE")
+done < <(grep -vE "^[[:space:]]*(#|$)" "$PACKAGE_LIST_FILE_PATH")
 
 if (( ${#missing[@]} > 0 )); then
   echo "ERROR: the following packages are NOT present in repo '$REPO_URL' for arch '$ARCH':" >&2
-  printf '  - %s\n' "${missing[@]}" >&2
+  printf "  - %s\n" "${missing[@]}" >&2
   echo >&2
   echo "You likely need to publish these packages to a custom APT repo and pass it via --repo." >&2
   exit 1
@@ -133,9 +182,6 @@ if [[ "$ANDROID10" == "1" ]]; then
 fi
 
 echo "[*] Generating bootstrap zip by downloading packages (no compilation)..."
-echo "[*] Arch: $ARCH"
-echo "[*] Android10: $ANDROID10"
-
 "$REPO_ROOT/scripts/generate-bootstraps.sh" "${args[@]}"
 
 ZIP_IN="bootstrap-${ARCH}.zip"
@@ -147,19 +193,17 @@ fi
 
 work="$tmpdir/unzipped"
 mkdir -p "$work"
-
 unzip -q "$ZIP_IN" -d "$work"
 
 # Patch common places that hardcode /data/data/<pkg>/...
 # Keep this conservative: only replace com.termux -> requested package.
-# Some files may not exist depending on android10 vs legacy.
 find "$work" -type f -print0 \
   | xargs -0 -r grep -Il "com.termux" \
   | while read -r f; do
-      sed -i "s/com\.termux/${APP_PACKAGE//\//\\/}/g" "$f"
+      sed -i "s/com\\.termux/${APP_PACKAGE//\//\\/}/g" "$f"
     done
 
-# Repack
+# Repack to repo root (mounted to host)
 ZIP_OUT="$REPO_ROOT/bootstrap-${ARCH}.zip"
 rm -f "$ZIP_OUT"
 (
@@ -170,3 +214,4 @@ rm -f "$ZIP_OUT"
 popd >/dev/null
 
 echo "[*] Done: $ZIP_OUT"
+'
