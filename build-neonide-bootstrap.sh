@@ -16,6 +16,9 @@ FORCE=1
 KEEP_CHANGES="${KEEP_CHANGES:-0}"
 DRY_RUN=0
 SETUP_ANDROID_SDK=1
+# Optionally set TMPDIR for container-side temp files.
+# Some environments (especially CI) may have more free space in /tmp.
+TMPDIR_IN_CONTAINER="${TMPDIR_IN_CONTAINER:-}"
 
 usage() {
   cat <<EOF
@@ -29,6 +32,7 @@ Options:
   --no-force            Don't pass -f (force rebuild).
   --dry-run             Patch properties.sh and print the docker command, but do not run it.
   --no-setup-android-sdk Skip automatic Android SDK/NDK setup inside docker.
+  --tmpdir-in-container <path> Set TMPDIR inside docker container (e.g. /tmp)
   -h, --help            Show this help.
 
 Environment:
@@ -55,6 +59,8 @@ while (($# > 0)); do
       DRY_RUN=1; shift 1;;
     --no-setup-android-sdk)
       SETUP_ANDROID_SDK=0; shift 1;;
+    --tmpdir-in-container)
+      TMPDIR_IN_CONTAINER="${2:?Missing value for --tmpdir-in-container}"; shift 2;;
     -h|--help)
       usage; exit 0;;
     *)
@@ -123,6 +129,11 @@ if [[ "$SETUP_ANDROID_SDK" == "1" ]]; then
   ./scripts/run-docker.sh bash -lc 'set -e; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then ./scripts/setup-android-sdk.sh; fi'
 fi
 
-./scripts/run-docker.sh "${args[@]}"
+if [[ -n "$TMPDIR_IN_CONTAINER" ]]; then
+  echo "[*] Using TMPDIR inside container: $TMPDIR_IN_CONTAINER"
+  ./scripts/run-docker.sh env TMPDIR="$TMPDIR_IN_CONTAINER" "${args[@]}"
+else
+  ./scripts/run-docker.sh "${args[@]}"
+fi
 
 echo "[*] Done. Look for bootstrap zip under the repo root or output directory depending on docker bind mounts."

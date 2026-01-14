@@ -16,6 +16,10 @@ on:
         required: false
         type: boolean
         default: true
+      repo_url:
+        description: "APT repository base URL (must contain requested packages)"
+        required: false
+        default: "https://packages-cf.termux.dev/apt/termux-main"
 
 permissions: {}
 
@@ -32,7 +36,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # build-neonide-bootstrap.sh uses scripts/run-docker.sh internally.
+      - name: Free additional disk space (if needed)
+        run: |
+          set -euo pipefail
+          ./scripts/free-space.sh
+
+      # Use the no-compile generator (downloads packages from repo) to avoid
+      # running full package builds and running out of disk space.
       - name: Build bootstrap zip
         run: |
           set -euo pipefail
@@ -40,13 +50,14 @@ jobs:
           args=(
             --app-package "${{ inputs.app_package }}"
             --arch "${{ inputs.arch }}"
+            --repo "${{ inputs.repo_url }}"
           )
 
           if [ "${{ inputs.android10 }}" != "true" ]; then
             args+=(--no-android10)
           fi
 
-          ./build-neonide-bootstrap.sh "${args[@]}"
+          ./build-neonide-bootstrap-from-repo.sh "${args[@]}"
 
       - name: List produced zips
         run: |
