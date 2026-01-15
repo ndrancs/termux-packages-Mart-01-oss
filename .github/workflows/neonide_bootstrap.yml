@@ -34,9 +34,32 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Disk space (before)
+        run: |
+          set -euo pipefail
+          df -h
+
+      # GitHub-hosted runners come with a lot of preinstalled toolchains that consume disk.
+      # Bootstrap builds can be large; free space early to avoid the runner itself crashing
+      # with "No space left on device" while writing diagnostic logs.
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@v10
+        with:
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          # Keep a small reserve so the system/runner can still write logs.
+          root-reserve-mb: 5120
+          temp-reserve-mb: 1024
+
+      - name: Disk space (after maximize)
+        run: |
+          set -euo pipefail
+          df -h
+
       - name: Checkout
         uses: actions/checkout@v5
-
 
       - name: Build bootstrap zip
         run: |
@@ -68,3 +91,10 @@ jobs:
           name: neonide-bootstrap-${{ inputs.arch }}-${{ github.sha }}
           path: bootstrap-*.zip
           if-no-files-found: error
+
+      - name: Docker cleanup (always)
+        if: always()
+        run: |
+          set -euo pipefail
+          docker system prune -af --volumes || true
+          df -h
