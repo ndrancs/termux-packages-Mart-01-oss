@@ -12,7 +12,8 @@ TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_SKIP_SRC_EXTRACT=true
 
 termux_step_get_source() {
-	termux_download "https://docbook.org/xml/4.1.2/docbkx412.zip" \
+	# docbook.org dropped the legacy 4.1.2 archive; use the canonical OASIS mirror.
+	termux_download "https://www.oasis-open.org/docbook/xml/4.1.2/docbkx412.zip" \
 		$TERMUX_PKG_CACHEDIR/docbkx412.zip \
 		30f0644064e0ea71751438251940b1431f46acada814a062870f486c772e7772
 	termux_download "https://docbook.org/xml/4.2/docbook-xml-4.2.zip" \
