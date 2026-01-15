@@ -40,32 +40,29 @@ jobs:
           df -h
 
       # GitHub-hosted runners come with a lot of preinstalled toolchains that consume disk.
-      # Bootstrap builds can be large; free space early to avoid the runner itself crashing
-      # with "No space left on device" while writing diagnostic logs.
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@v10
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          # Keep a small reserve so the system/runner can still write logs.
-          root-reserve-mb: 5120
-          temp-reserve-mb: 1024
-
-      - name: Disk space (after maximize)
+      # The docker builder image is large and by default is stored under /var/lib/docker on the root filesystem.
+      # Free some space and then relocate docker storage under the workspace to avoid filling '/'.
+      - name: Free disk space (lightweight)
         run: |
           set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
           df -h
 
-      # Docker image pulls can fill /var/lib/docker (root partition). Move docker storage to /mnt (larger partition on GH runners).
-      - name: Move Docker data-root to /mnt
+      # IMPORTANT: Store docker image layers on the workspace disk instead of /var/lib/docker.
+      # This avoids "docker: write /var/lib/docker/tmp/...: no space left on device".
+      - name: Move Docker data-root to workspace
         run: |
           set -euo pipefail
+          DOCKER_ROOT="$GITHUB_WORKSPACE/.docker"
           sudo systemctl stop docker
-          sudo mkdir -p /mnt/docker
-          sudo rsync -aHAX --delete /var/lib/docker/ /mnt/docker/ || true
-          echo '{"data-root": "/mnt/docker"}' | sudo tee /etc/docker/daemon.json
+          sudo mkdir -p "$DOCKER_ROOT"
+          # If docker had already been used, migrate old state to the new root.
+          if [ -d /var/lib/docker ] && [ -n "$(ls -A /var/lib/docker 2>/dev/null || true)" ]; then
+            sudo rsync -aHAX --delete /var/lib/docker/ "$DOCKER_ROOT/" || true
+          fi
+          echo "{\"data-root\": \"$DOCKER_ROOT\"}" | sudo tee /etc/docker/daemon.json
           sudo systemctl start docker
           docker info | sed -n '1,120p'
           df -h
