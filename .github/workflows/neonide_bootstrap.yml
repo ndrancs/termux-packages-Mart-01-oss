@@ -50,12 +50,14 @@ jobs:
           sudo rm -rf /var/lib/apt/lists/* || true
           df -h
 
-      # IMPORTANT: Store docker image layers on the workspace disk instead of /var/lib/docker.
-      # This avoids "docker: write /var/lib/docker/tmp/...: no space left on device".
-      - name: Move Docker data-root to workspace
+      # IMPORTANT: Store docker image layers outside the git checkout directory.
+      # If we store docker root under $GITHUB_WORKSPACE, then actions/checkout may fail on reruns
+      # because it tries to delete the workspace and can't remove root-owned files.
+      # Use /mnt (large disk) to keep docker storage away from the repo directory.
+      - name: Move Docker data-root to /mnt/docker
         run: |
           set -euo pipefail
-          DOCKER_ROOT="$GITHUB_WORKSPACE/.docker"
+          DOCKER_ROOT="/mnt/docker"
           sudo systemctl stop docker
           sudo mkdir -p "$DOCKER_ROOT"
           # If docker had already been used, migrate old state to the new root.
