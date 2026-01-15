@@ -4,14 +4,14 @@ TERMUX_PKG_LICENSE="GPL-3.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="7.2"
 TERMUX_PKG_REVISION=3
-_DEBIAN_REVISION="-4"
+_DEBIAN_REVISION="-5"
 TERMUX_PKG_SRCURL=(
 	https://mirrors.kernel.org/gnu/texinfo/texinfo-${TERMUX_PKG_VERSION}.tar.xz
 	https://deb.debian.org/debian/pool/main/t/texinfo/texinfo_${TERMUX_PKG_VERSION}${_DEBIAN_REVISION}.debian.tar.xz
 )
 TERMUX_PKG_SHA256=(
 	0329d7788fbef113fa82cb80889ca197a344ce0df7646fe000974c5d714363a6
-	89f0bcd91adc7c8cbd8fb90610fbacaa7c625819f7a8f2ebaeffff9d33eceeff
+	e8312ac81104da1c133ffd9fe366526c44406a95226445fe83426ab2cdc82407
 )
 TERMUX_PKG_AUTO_UPDATE=true
 # gawk is used by texindex:
