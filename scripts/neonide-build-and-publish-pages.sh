@@ -175,7 +175,9 @@ build_and_publish_srcpkg() {
   mkdir -p output
   rm -f output/*.deb || true
 
-  ./scripts/run-docker.sh ./build-package.sh -a "$TERMUX_ARCH" "$srcpkg"
+  # The docker builder image may not contain the exact llvm major version configured in scripts/properties.sh.
+  # Avoid failures like: "BUILD_CC=/usr/lib/llvm-19/bin/clang does not exist" by forcing host LLVM base to /usr.
+  ./scripts/run-docker.sh env TERMUX_HOST_LLVM_BASE_DIR=/usr ./build-package.sh -a "$TERMUX_ARCH" "$srcpkg"
 
   # Determine which .debs belong to this recipe: main package + subpackages.
   declare -a names=("$srcpkg")
