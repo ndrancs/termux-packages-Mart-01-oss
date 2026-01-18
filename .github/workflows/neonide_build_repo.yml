@@ -1,0 +1,117 @@
+name: NeonIDE - Build & publish APT repo (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Max number of source packages to build per run (keeps workflow under GitHub limits)"
+        required: false
+        default: "25"
+      force_rebuild:
+        description: "Rebuild even if .deb exists and SHA256 matches current Packages"
+        required: false
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Disk space (before)
+        run: |
+          set -euo pipefail
+          df -h
+
+      # Reuse approach from neonide_bootstrap.yml
+      - name: Free disk space (lightweight)
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          sudo apt-get clean || true
+          sudo rm -rf /var/lib/apt/lists/* || true
+          df -h
+
+      - name: Move Docker data-root to /mnt/docker
+        run: |
+          set -euo pipefail
+          DOCKER_ROOT="/mnt/docker"
+          sudo systemctl stop docker
+          sudo mkdir -p "$DOCKER_ROOT"
+          if [ -d /var/lib/docker ] && [ -n "$(ls -A /var/lib/docker 2>/dev/null || true)" ]; then
+            sudo rsync -aHAX --delete /var/lib/docker/ "$DOCKER_ROOT/" || true
+          fi
+          echo "{\"data-root\": \"$DOCKER_ROOT\"}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl start docker
+          docker info | sed -n '1,120p'
+          df -h
+
+      - name: Checkout termux-packages
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Install host tools for repo generation
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git
+
+      - name: Checkout pages repo
+        env:
+          PAGES_PAT: ${{ secrets.PAGES_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PAGES_PAT:-}" ]; then
+            echo "::error ::Missing secret PAGES_PAT (needs push access to Mart-01-oss/pages.git)"
+            exit 1
+          fi
+          rm -rf pages-repo
+          git clone "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
+
+      - name: Ensure Android SDK/NDK available in docker
+        run: |
+          set -euo pipefail
+          ./scripts/run-docker.sh bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi'
+
+      - name: Build missing packages & update repo metadata
+        env:
+          PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
+          TERMUX_ARCH: aarch64
+          BATCH_SIZE: ${{ inputs.batch_size }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild && 'true' || 'false' }}
+          # Exclude "termux core" (bootstrap) packages list
+          EXCLUDE_BOOTSTRAP_LIST: ${{ github.workspace }}/scripts/neonide-bootstrap-packages.txt
+        run: |
+          set -euo pipefail
+          ./scripts/neonide-build-and-publish-pages.sh
+
+      - name: Commit & push pages repo changes (if any)
+        env:
+          PAGES_PAT: ${{ secrets.PAGES_PAT }}
+        run: |
+          set -euo pipefail
+          cd pages-repo
+          if [ -z "$(git status --porcelain=v1)" ]; then
+            echo "No changes to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update aarch64 repo (batch build)"
+          git push origin main
+
+      - name: Docker cleanup (always)
+        if: always()
+        run: |
+          set -euo pipefail
+          docker system prune -af --volumes || true
+          df -h
