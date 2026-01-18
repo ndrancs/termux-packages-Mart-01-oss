@@ -62,7 +62,21 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git
+          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git gnupg
+
+      - name: Import repo signing key (optional)
+        env:
+          NEONIDE_GPG_PRIVATE_KEY_B64: ${{ secrets.NEONIDE_GPG_PRIVATE_KEY_B64 }}
+          NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEONIDE_GPG_PRIVATE_KEY_B64:-}" ] || [ -z "${NEONIDE_GPG_KEY_ID:-}" ]; then
+            echo "No signing key configured (NEONIDE_GPG_PRIVATE_KEY_B64/NEONIDE_GPG_KEY_ID missing). Repo will be unsigned."
+            exit 0
+          fi
+          echo "$NEONIDE_GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --import
+          # Trust the key locally so gpg can sign in non-interactive mode
+          printf 'trust\n5\ny\n' | gpg --batch --command-fd 0 --edit-key "$NEONIDE_GPG_KEY_ID" >/dev/null
 
       - name: Checkout pages repo
         env:
@@ -89,6 +103,8 @@ jobs:
           FORCE_REBUILD: ${{ inputs.force_rebuild && 'true' || 'false' }}
           # Exclude "termux core" (bootstrap) packages list
           EXCLUDE_BOOTSTRAP_LIST: ${{ github.workspace }}/scripts/neonide-bootstrap-packages.txt
+          # Optional signing
+          NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
         run: |
           set -euo pipefail
           ./scripts/neonide-build-and-publish-pages.sh

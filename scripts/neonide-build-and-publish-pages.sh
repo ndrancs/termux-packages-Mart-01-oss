@@ -236,6 +236,23 @@ EOF
   add_section "SHA512" sha512sum
 )
 
+# Optionally sign the repo metadata.
+# If NEONIDE_GPG_KEY_ID is set and gpg is available, generate:
+# - dists/stable/InRelease (clearsigned)
+# - dists/stable/Release.gpg (detached)
+if command -v gpg >/dev/null 2>&1 && [[ -n "${NEONIDE_GPG_KEY_ID:-}" ]]; then
+  echo "[*] Signing Release (key: $NEONIDE_GPG_KEY_ID)..."
+  (
+    cd "$PAGES_REPO_DIR/dists/stable"
+    # Clear-signed InRelease
+    gpg --batch --yes --pinentry-mode loopback --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o InRelease Release
+    # Detached signature
+    gpg --batch --yes --pinentry-mode loopback --local-user "$NEONIDE_GPG_KEY_ID" --armor --detach-sign -o Release.gpg Release
+  )
+else
+  echo "[*] Skipping signing (set NEONIDE_GPG_KEY_ID and ensure gpg is installed)."
+fi
+
 # Show changes summary
 (
   cd "$PAGES_REPO_DIR"
