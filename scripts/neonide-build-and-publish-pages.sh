@@ -193,7 +193,11 @@ build_and_publish_srcpkg() {
   rm -f output/*.deb || true
 
   # Ensure TERMUX_HOST_LLVM_BASE_DIR points to a directory that has bin/clang inside the container.
-  ./scripts/run-docker.sh env TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" ./build-package.sh -a "$TERMUX_ARCH" "$srcpkg"
+  # Also force BUILD_CC to avoid configure failures caused by missing /usr/bin/clang in the builder image.
+  ./scripts/run-docker.sh env \
+    TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" \
+    BUILD_CC="$HOST_LLVM_BASE_DIR_IN_CONTAINER/bin/clang" \
+    ./build-package.sh -a "$TERMUX_ARCH" "$srcpkg"
 
   # Determine which .debs belong to this recipe: main package + subpackages.
   declare -a names=("$srcpkg")
