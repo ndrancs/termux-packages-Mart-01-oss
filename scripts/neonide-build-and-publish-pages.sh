@@ -202,6 +202,7 @@ build_and_publish_srcpkg() {
     TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" \
     BUILD_CC="$HOST_LLVM_BASE_DIR_IN_CONTAINER/bin/clang" \
     TERMUX_REPO_APP__PACKAGE_NAME="com.neonide.studio" \
+    TERMUX_ALLOW_UNVERIFIED_REPOS="${TERMUX_ALLOW_UNVERIFIED_REPOS:-false}" \
     ./build-package.sh -i -a "$TERMUX_ARCH" "$srcpkg"
 
   # Upload ALL produced debs (including dependencies) from output/ into pages pool.
