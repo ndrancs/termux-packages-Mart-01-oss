@@ -315,9 +315,9 @@ if command -v gpg >/dev/null 2>&1 && [[ -n "${NEONIDE_GPG_KEY_ID:-}" ]]; then
   (
     cd "$PAGES_REPO_DIR/dists/stable"
     # Clear-signed InRelease
-    gpg --batch --yes --pinentry-mode loopback --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o InRelease Release
+    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o InRelease Release
     # Detached signature
-    gpg --batch --yes --pinentry-mode loopback --local-user "$NEONIDE_GPG_KEY_ID" --armor --detach-sign -o Release.gpg Release
+    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$NEONIDE_GPG_KEY_ID" --armor --detach-sign -o Release.gpg Release
   )
 else
   echo "[*] Skipping signing (set NEONIDE_GPG_KEY_ID and ensure gpg is installed)."
