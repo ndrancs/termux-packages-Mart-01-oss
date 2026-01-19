@@ -53,8 +53,24 @@ fi
 # To check, use "ls -Z ."
 if [ -n "$(command -v getenforce)" ] && [ "$(getenforce)" = Enforcing ]; then
 	VOLUME=$REPOROOT:$CONTAINER_HOME_DIR/termux-packages:z
+	SELINUX_Z=":z"
 else
 	VOLUME=$REPOROOT:$CONTAINER_HOME_DIR/termux-packages
+	SELINUX_Z=""
+fi
+
+# Optional: bind-mount a host directory as TERMUX_TOPDIR (default: $HOME/.termux-build in container).
+# This is useful in CI where large builds (e.g. aosp-libs checkout) may exhaust docker overlay storage.
+#
+# Usage (host side):
+#   export TERMUX_DOCKER__HOST_TERMUX_TOPDIR=/mnt/termux-topdir
+#
+# The directory will be mounted into the container at:
+#   /home/builder/.termux-build
+EXTRA_VOLUMES=""
+if [ -n "${TERMUX_DOCKER__HOST_TERMUX_TOPDIR:-}" ]; then
+	mkdir -p "${TERMUX_DOCKER__HOST_TERMUX_TOPDIR}"
+	EXTRA_VOLUMES=" --volume ${TERMUX_DOCKER__HOST_TERMUX_TOPDIR}:$CONTAINER_HOME_DIR/.termux-build${SELINUX_Z}"
 fi
 
 : ${TERMUX_BUILDER_IMAGE_NAME:=ghcr.io/termux/package-builder}
@@ -84,6 +100,7 @@ $SUDO docker start $CONTAINER_NAME >/dev/null 2>&1 || {
 		--init \
 		--name $CONTAINER_NAME \
 		--volume $VOLUME \
+		$EXTRA_VOLUMES \
 		$SEC_OPT \
 		--tty \
 		$TERMUX_BUILDER_IMAGE_NAME
