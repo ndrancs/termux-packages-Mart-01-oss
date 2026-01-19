@@ -41,6 +41,57 @@ jobs:
       - name: Checkout termux-packages
         uses: actions/checkout@v5
 
+      - name: Install host debug tools (gnupg)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnupg coreutils
+          gpg --version | sed -n '1,40p'
+
+      - name: Debug GPG signing/passphrase (repo metadata)
+        env:
+          NEONIDE_GPG_PRIVATE_KEY_B64: ${{ secrets.NEONIDE_GPG_PRIVATE_KEY_B64 }}
+          NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
+          NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          echo "=== GPG env presence (do not print secrets) ==="
+          if [ -n "${NEONIDE_GPG_PRIVATE_KEY_B64:-}" ]; then echo "NEONIDE_GPG_PRIVATE_KEY_B64: set"; else echo "NEONIDE_GPG_PRIVATE_KEY_B64: NOT set"; fi
+          if [ -n "${NEONIDE_GPG_KEY_ID:-}" ]; then echo "NEONIDE_GPG_KEY_ID: set ($NEONIDE_GPG_KEY_ID)"; else echo "NEONIDE_GPG_KEY_ID: NOT set"; fi
+          if [ -n "${NEONIDE_GPG_PASSPHRASE:-}" ]; then echo "NEONIDE_GPG_PASSPHRASE: set (len=${#NEONIDE_GPG_PASSPHRASE})"; else echo "NEONIDE_GPG_PASSPHRASE: NOT set"; fi
+
+          if [ -z "${NEONIDE_GPG_PRIVATE_KEY_B64:-}" ] || [ -z "${NEONIDE_GPG_KEY_ID:-}" ]; then
+            echo "No signing secrets configured; skipping GPG debug.";
+            exit 0
+          fi
+
+          echo "=== Import private key ==="
+          echo "$NEONIDE_GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --import
+
+          echo "=== List secret keys (sanitized) ==="
+          gpg --batch --list-secret-keys --keyid-format=long "$NEONIDE_GPG_KEY_ID" | sed -n '1,120p'
+
+          echo "=== Test non-interactive signing (expected to FAIL if key needs passphrase) ==="
+          tmpdir="$(mktemp -d)"
+          trap 'rm -rf "$tmpdir"' EXIT
+          echo "test payload $(date -Ru)" > "$tmpdir/payload.txt"
+
+          set +e
+          gpg --batch --yes --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o "$tmpdir/payload.txt.asc" "$tmpdir/payload.txt"
+          rc=$?
+          set -e
+          echo "sign-without-passphrase exit code: $rc"
+
+          if [ -n "${NEONIDE_GPG_PASSPHRASE:-}" ]; then
+            echo "=== Test non-interactive signing WITH loopback passphrase (should succeed) ==="
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$NEONIDE_GPG_PASSPHRASE" --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o "$tmpdir/payload.loopback.asc" "$tmpdir/payload.txt"
+            echo "loopback signing OK; output preview:"
+            sed -n '1,20p' "$tmpdir/payload.loopback.asc" || true
+          else
+            echo "Passphrase secret not set; cannot test loopback signing success path."
+          fi
+
       - name: Show selected TERMUX_HOST_LLVM settings (from properties.sh)
         run: |
           set -euo pipefail

@@ -310,14 +310,36 @@ EOF
 # If NEONIDE_GPG_KEY_ID is set and gpg is available, generate:
 # - dists/stable/InRelease (clearsigned)
 # - dists/stable/Release.gpg (detached)
+#
+# Notes:
+# - If the private key is passphrase-protected, you must provide NEONIDE_GPG_PASSPHRASE.
+# - If signing fails (e.g. missing passphrase), we keep the repo usable by leaving it unsigned.
 if command -v gpg >/dev/null 2>&1 && [[ -n "${NEONIDE_GPG_KEY_ID:-}" ]]; then
   echo "[*] Signing Release (key: $NEONIDE_GPG_KEY_ID)..."
+
   (
     cd "$PAGES_REPO_DIR/dists/stable"
+
+    # Prepare base gpg arguments.
+    gpg_args=(--batch --yes --local-user "$NEONIDE_GPG_KEY_ID")
+    if [[ -n "${NEONIDE_GPG_PASSPHRASE:-}" ]]; then
+      # Use loopback pinentry for non-interactive signing in CI.
+      gpg_args+=(--pinentry-mode loopback --passphrase "$NEONIDE_GPG_PASSPHRASE")
+    fi
+
     # Clear-signed InRelease
-    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$NEONIDE_GPG_KEY_ID" --clearsign -o InRelease Release
+    if ! gpg "${gpg_args[@]}" --clearsign -o InRelease Release; then
+      echo "WARN: Failed to sign Release -> InRelease." >&2
+      echo "WARN: If your key has a passphrase, set the GitHub Actions secret NEONIDE_GPG_PASSPHRASE." >&2
+      rm -f InRelease Release.gpg || true
+      exit 0
+    fi
+
     # Detached signature
-    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$NEONIDE_GPG_KEY_ID" --armor --detach-sign -o Release.gpg Release
+    if ! gpg "${gpg_args[@]}" --armor --detach-sign -o Release.gpg Release; then
+      echo "WARN: Failed to generate Release.gpg (continuing with InRelease only)." >&2
+      rm -f Release.gpg || true
+    fi
   )
 else
   echo "[*] Skipping signing (set NEONIDE_GPG_KEY_ID and ensure gpg is installed)."
