@@ -2219,6 +2219,29 @@ else
     for component in $(jq -r 'del(.pkg_format) | .[] | .component' "$TERMUX_PKGS__BUILD__REPO_ROOT_DIR/repo.json"); do
         TERMUX_REPO_COMPONENT+=("$component")
     done
+
+    # Optional extra repos (e.g. fallback to official Termux main repo when using a custom repo).
+    # Provide these as space-separated values. All three variables must have the same count.
+    # Example:
+    #   TERMUX_EXTRA_REPO_URL="https://packages-cf.termux.dev/apt/termux-main"
+    #   TERMUX_EXTRA_REPO_DISTRIBUTION="stable"
+    #   TERMUX_EXTRA_REPO_COMPONENT="main"
+    if [[ -n "${TERMUX_EXTRA_REPO_URL:-}" || -n "${TERMUX_EXTRA_REPO_DISTRIBUTION:-}" || -n "${TERMUX_EXTRA_REPO_COMPONENT:-}" ]]; then
+        read -r -a __extra_urls <<< "${TERMUX_EXTRA_REPO_URL:-}"
+        read -r -a __extra_dists <<< "${TERMUX_EXTRA_REPO_DISTRIBUTION:-}"
+        read -r -a __extra_comps <<< "${TERMUX_EXTRA_REPO_COMPONENT:-}"
+        if [[ ${#__extra_urls[@]} -ne ${#__extra_dists[@]} || ${#__extra_urls[@]} -ne ${#__extra_comps[@]} ]]; then
+            echo "Invalid TERMUX_EXTRA_REPO_*: counts do not match" 1>&2
+            echo "TERMUX_EXTRA_REPO_URL count=${#__extra_urls[@]} TERMUX_EXTRA_REPO_DISTRIBUTION count=${#__extra_dists[@]} TERMUX_EXTRA_REPO_COMPONENT count=${#__extra_comps[@]}" 1>&2
+            exit 1
+        fi
+        for i in "${!__extra_urls[@]}"; do
+            TERMUX_REPO_URL+=("${__extra_urls[$i]}")
+            TERMUX_REPO_DISTRIBUTION+=("${__extra_dists[$i]}")
+            TERMUX_REPO_COMPONENT+=("${__extra_comps[$i]}")
+        done
+        unset __extra_urls __extra_dists __extra_comps
+    fi
 fi
 
 
