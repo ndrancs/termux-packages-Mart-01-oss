@@ -1,0 +1,91 @@
+name: Check package source URLs
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "Scope to check: 'changed' (PR/push only) or 'all'"
+        type: choice
+        required: false
+        default: all
+        options:
+          - all
+          - changed
+      include_disabled:
+        description: "Also check disabled-packages"
+        type: boolean
+        required: false
+        default: false
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'x11-packages/**'
+      - 'root-packages/**'
+      - 'disabled-packages/**'
+      - 'scripts/check-srcurls.sh'
+      - '.github/workflows/check_package_srcurls.yml'
+  push:
+    branches:
+      - master
+      - main
+      - dev
+      - 'dev/**'
+    paths:
+      - 'packages/**'
+      - 'x11-packages/**'
+      - 'root-packages/**'
+      - 'disabled-packages/**'
+      - 'scripts/check-srcurls.sh'
+      - '.github/workflows/check_package_srcurls.yml'
+
+permissions: {} # none
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check-urls:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1000
+
+      - name: Install jq (needed for changed-scope detection)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Check package TERMUX_PKG_SRCURL reachability
+        env:
+          SCOPE: ${{ github.event.inputs.scope || 'all' }}
+          INCLUDE_DISABLED: ${{ github.event.inputs.include_disabled || false }}
+        run: |
+          set -euo pipefail
+          args=(--scope "$SCOPE" --jobs 16 --output-dir artifacts/url-check)
+          if [[ "$INCLUDE_DISABLED" == "true" ]]; then
+            args+=(--include-disabled)
+          fi
+          ./scripts/check-srcurls.sh "${args[@]}" | tee artifacts/url-check/run.log
+
+      - name: Add summary
+        if: always()
+        run: |
+          if [[ -f artifacts/url-check/summary.md ]]; then
+            cat artifacts/url-check/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Source URL check" >> "$GITHUB_STEP_SUMMARY"
+            echo "No summary produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload URL check report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: url-check-report
+          path: artifacts/url-check/
+          if-no-files-found: error
