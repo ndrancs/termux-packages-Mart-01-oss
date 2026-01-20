@@ -3,21 +3,24 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: scripts/check-srcurls.sh [--scope all|changed] [--jobs N] [--include-disabled] [--output-dir DIR]
+Usage: scripts/check-srcurls.sh [--scope all|changed] [--jobs N] [--include-disabled] [--output-dir DIR] [--fail]
 
 Collect TERMUX_PKG_SRCURL values from package build.sh files and check whether
 those URLs are reachable.
 
-Outputs:
+Outputs (written under --output-dir):
   - report.tsv
   - report.md
   - summary.md
-  - failures.tsv (if any)
+  - failures.tsv
+  - run.log (if the caller tees stdout)
 
 Notes:
-  - Build scripts are *sourced* in a minimal bash environment to expand variables
+  - build.sh files are *sourced* in a minimal bash environment to expand variables
     like ${TERMUX_PKG_VERSION}.
   - Only http(s) URLs are actively checked. Other schemes are marked as SKIP.
+  - By default the script exits 0 even if failures are found. Pass --fail to
+    exit non-zero when failures are detected.
 EOF
 }
 
@@ -25,6 +28,7 @@ SCOPE="all"
 JOBS=8
 INCLUDE_DISABLED=false
 OUTPUT_DIR="artifacts/url-check"
+FAIL_ON_ISSUES=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +40,8 @@ while [[ $# -gt 0 ]]; do
       INCLUDE_DISABLED=true; shift 1 ;;
     --output-dir)
       OUTPUT_DIR="${2:-}"; shift 2 ;;
+    --fail)
+      FAIL_ON_ISSUES=true; shift 1 ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -62,6 +68,7 @@ mkdir -p "$OUTPUT_DIR"
 TMPBASE="${TMPDIR:-$PWD/.tmp}"
 mkdir -p "$TMPBASE"
 TASKS_FILE="$TMPBASE/url-check-tasks.tsv"
+
 REPORT_TSV="$OUTPUT_DIR/report.tsv"
 REPORT_MD="$OUTPUT_DIR/report.md"
 FAILURES_TSV="$OUTPUT_DIR/failures.tsv"
@@ -79,9 +86,7 @@ get_changed_build_sh() {
   local base="" head="HEAD"
 
   if [[ -n "${GITHUB_EVENT_PATH:-}" ]] && command -v jq >/dev/null 2>&1; then
-    # pull_request
     base=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || true)
-    # push
     if [[ -z "$base" ]]; then
       base=$(jq -r '.before // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || true)
     fi
@@ -89,18 +94,12 @@ get_changed_build_sh() {
     [[ -z "$head" ]] && head="HEAD"
   fi
 
-  if [[ -z "$base" ]]; then
-    # Fallback for PRs: base ref name
-    if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
-      git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF" >/dev/null 2>&1 || true
-      base="origin/$GITHUB_BASE_REF"
-    fi
+  if [[ -z "$base" ]] && [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF" >/dev/null 2>&1 || true
+    base="origin/$GITHUB_BASE_REF"
   fi
 
-  if [[ -z "$base" ]]; then
-    # As a last resort, just check all.
-    return 1
-  fi
+  [[ -z "$base" ]] && return 1
 
   git diff --name-only "$base".."${head:-HEAD}" \
     | grep -E '^(packages|x11-packages|root-packages|disabled-packages)/[^/]+/build\.sh$' || true
@@ -115,7 +114,6 @@ if [[ "$SCOPE" == "changed" ]]; then
     SCOPE="all"
   else
     for f in "${changed[@]}"; do
-      # If disabled-packages were not requested, skip them.
       if [[ "$f" == disabled-packages/* ]] && ! $INCLUDE_DISABLED; then
         continue
       fi
@@ -133,30 +131,42 @@ if [[ "$SCOPE" == "all" ]]; then
   done
 fi
 
-# Collect URL tasks: repo_path \t pkg \t url
 collect_urls_for_build_sh() {
   local build_sh="$1"
+
   local pkg_dir repo_path pkg_name
   pkg_dir=$(dirname "$build_sh")
   repo_path=$(dirname "$pkg_dir")
   pkg_name=$(basename "$pkg_dir")
 
   # Evaluate TERMUX_PKG_SRCURL by sourcing build.sh in its directory.
-  # Disable nounset (set +u) to avoid failures on undefined variables.
-  local urls
+  # Disable nounset inside to avoid failures on undefined variables.
+  local urls ec
   set +e
-  urls=$(bash -c 'set -e; set +u; cd "$1"; source ./build.sh >/dev/null 2>&1 || source ./build.sh; 
-    if ! declare -p TERMUX_PKG_SRCURL >/dev/null 2>&1; then exit 3; fi
+  urls=$(bash -c '
+    set -e
+    set +u
+    cd "$1"
+    # Some build.sh emit output when sourced; suppress to keep report clean.
+    source ./build.sh >/dev/null 2>&1 || source ./build.sh
+
+    if ! declare -p TERMUX_PKG_SRCURL >/dev/null 2>&1; then
+      exit 3
+    fi
+
     if declare -p TERMUX_PKG_SRCURL 2>/dev/null | grep -q "declare -a"; then
-      for u in "${TERMUX_PKG_SRCURL[@]}"; do echo "$u"; done
+      for u in "${TERMUX_PKG_SRCURL[@]}"; do
+        echo "$u"
+      done
     else
       # Split on whitespace if multiple URLs were embedded in a single string.
-      # (Most packages use arrays when they have multiple URLs.)
       read -r -a _arr <<< "${TERMUX_PKG_SRCURL}"
-      for u in "${_arr[@]}"; do echo "$u"; done
+      for u in "${_arr[@]}"; do
+        echo "$u"
+      done
     fi
   ' bash "$pkg_dir" 2>/dev/null)
-  local ec=$?
+  ec=$?
   set -e
 
   if [[ $ec -ne 0 ]] || [[ -z "${urls:-}" ]]; then
@@ -181,24 +191,24 @@ check_one_url() {
   local repo="$1" pkg="$2" url="$3"
 
   if [[ "$url" == EVAL_FAIL* ]]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "EVAL_FAIL" "" "";
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "EVAL_FAIL" "" ""
     return 0
   fi
 
   if [[ ! "$url" =~ ^https?:// ]]; then
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "SKIP_UNSUPPORTED_SCHEME" "" "";
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "SKIP_UNSUPPORTED_SCHEME" "" ""
     return 0
   fi
 
-  # Use a range request to avoid downloading full archives.
-  # -L follow redirects
-  # -r 0-0 request only first byte
-  # --max-time total time limit
-  # --connect-timeout handshake timeout
   local http_code curl_exit
+  curl_exit=0
+
+  # Avoid "set -e" exiting on curl failures.
+  set +e
   http_code=$(curl -L -r 0-0 -o /dev/null -sS -w '%{http_code}' \
-    --connect-timeout 7 --max-time 25 --retry 0 "$url" || true)
+    --connect-timeout 7 --max-time 25 --retry 0 "$url")
   curl_exit=$?
+  set -e
 
   local result
   if [[ $curl_exit -ne 0 ]]; then
@@ -214,43 +224,38 @@ check_one_url() {
     esac
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "$result" "$http_code" "$curl_exit";
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "$result" "$http_code" "$curl_exit"
 }
 export -f check_one_url
 
-# Run checks (sequential by default; allow limited parallelism via xargs).
-# Using xargs keeps this script POSIX-ish and avoids requiring extra deps.
-# URLs do not contain spaces in practice; package names don't either.
+# Run checks with limited parallelism.
+# Use NUL delimiters to avoid any shell parsing issues (e.g. parentheses).
 while IFS=$'\t' read -r repo pkg url; do
-  printf '%q\t%q\t%q\n' "$repo" "$pkg" "$url"
+  printf '%s\0%s\0%s\0' "$repo" "$pkg" "$url"
 done < "$TASKS_FILE" \
-  | xargs -P "$JOBS" -n 1 -I{} bash -c '
-      # {} is a single line containing 3 quoted strings separated by \t.
-      # shellcheck disable=SC2086
-      eval "set -- {}";
-      check_one_url "$1" "$2" "$3";
-    ' \
+  | xargs -0 -P "$JOBS" -n 3 bash -c 'check_one_url "$1" "$2" "$3"' bash \
   >> "$REPORT_TSV"
 
 # Produce failures list.
 awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {print}' "$REPORT_TSV" > "$FAILURES_TSV" || true
 
-# Markdown report + summary
+ok_count=$(awk -F'\t' 'NR>1 && $4=="OK"{c++} END{print c+0}' "$REPORT_TSV")
+fail_count=$(awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
+skip_count=$(awk -F'\t' 'NR>1 && $4=="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
+eval_fail_count=$(awk -F'\t' 'NR>1 && $4=="EVAL_FAIL"{c++} END{print c+0}' "$REPORT_TSV")
+
+# Markdown report
 {
   echo "# Termux source URL check report"
   echo
   echo "Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
   echo
-  echo "Scope: \\`$SCOPE\\`"
-  echo "Repos: \\`${repo_dirs[*]}\\`"
+  printf 'Scope: `%s`\n' "$SCOPE"
+  printf 'Repos: `%s`\n' "${repo_dirs[*]}"
   echo "Total entries: $(($(wc -l < "$REPORT_TSV") - 1))"
   echo
   echo "## Summary"
   echo
-  ok_count=$(awk -F'\t' 'NR>1 && $4=="OK"{c++} END{print c+0}' "$REPORT_TSV")
-  fail_count=$(awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
-  skip_count=$(awk -F'\t' 'NR>1 && $4=="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
-  eval_fail_count=$(awk -F'\t' 'NR>1 && $4=="EVAL_FAIL"{c++} END{print c+0}' "$REPORT_TSV")
   echo "- OK: $ok_count"
   echo "- Fail: $fail_count"
   echo "- Skipped (non-http/https): $skip_count"
@@ -260,7 +265,7 @@ awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {print}' "$REP
   echo
   echo "| repo | pkg | result | http | url |"
   echo "|---|---:|---:|---:|---|"
-  awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" { 
+  awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {
       gsub(/\|/,"\\|",$3);
       printf("| %s | %s | %s | %s | %s |\n", $1, $2, $4, $5, $3);
     }' "$REPORT_TSV" | head -n 200
@@ -272,7 +277,7 @@ awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {print}' "$REP
 {
   echo "## Source URL check"
   echo
-  echo "- Scope: \\`$SCOPE\\`"
+  printf '%s\n' "- Scope: \`$SCOPE\`"
   echo "- Total: $(($(wc -l < "$REPORT_TSV") - 1))"
   echo "- OK: $ok_count"
   echo "- Fail: $fail_count"
@@ -282,8 +287,7 @@ awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {print}' "$REP
   echo "Artifact: url-check-report (see report.tsv / report.md)"
 } > "$SUMMARY_MD"
 
-# Fail the job if we saw any actual failures.
-if [[ "$fail_count" -gt 0 ]] || [[ "$eval_fail_count" -gt 0 ]]; then
+if $FAIL_ON_ISSUES && { [[ "$fail_count" -gt 0 ]] || [[ "$eval_fail_count" -gt 0 ]]; }; then
   echo "URL check detected failures (fail=$fail_count, eval_fail=$eval_fail_count)." >&2
   exit 1
 fi

@@ -4,13 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: "Scope to check: 'changed' (PR/push only) or 'all'"
+        description: "Scope to check: 'changed' or 'all'"
         type: choice
         required: false
         default: all
         options:
           - all
           - changed
+      fail_on_issues:
+        description: "Fail the job if any URLs are bad (404/unreachable/eval failures)"
+        type: boolean
+        required: false
+        default: true
       include_disabled:
         description: "Also check disabled-packages"
         type: boolean
@@ -62,13 +67,20 @@ jobs:
 
       - name: Check package TERMUX_PKG_SRCURL reachability
         env:
-          SCOPE: ${{ github.event.inputs.scope || 'all' }}
+          # For PR/push we default to changed (faster). For workflow_dispatch, user input defaults to all.
+          SCOPE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.scope || 'all') || 'changed' }}
           INCLUDE_DISABLED: ${{ github.event.inputs.include_disabled || false }}
+          # For PR/push, don't fail the workflow by default (still uploads the report).
+          FAIL_ON_ISSUES: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.fail_on_issues || 'true') || 'false' }}
         run: |
           set -euo pipefail
+          mkdir -p artifacts/url-check
           args=(--scope "$SCOPE" --jobs 16 --output-dir artifacts/url-check)
           if [[ "$INCLUDE_DISABLED" == "true" ]]; then
             args+=(--include-disabled)
+          fi
+          if [[ "$FAIL_ON_ISSUES" == "true" ]]; then
+            args+=(--fail)
           fi
           ./scripts/check-srcurls.sh "${args[@]}" | tee artifacts/url-check/run.log
 
