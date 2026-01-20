@@ -175,7 +175,11 @@ collect_urls_for_build_sh() {
       | cat >/dev/null; true)
 
     # Just extract literal URLs from the file content.
-    urls=$(grep -Eo 'https?://[^"\x27 \t\n)]+' "$build_sh" | sort -u || true)
+    # Use a stricter regex so we don't capture truncated fragments like "https://gi".
+    # Require at least one dot in the hostname and at least 8 chars after scheme.
+    urls=$(grep -Eo 'https?://[^"\x27 \t\n)]+' "$build_sh" \
+      | awk 'length($0) >= 16 && $0 ~ /^https?:\/\/[^\/]+\.[^\/]+\// {print}' \
+      | sort -u || true)
 
     if [[ -z "${urls:-}" ]]; then
       printf '%s\t%s\t%s\n' "$repo_path" "$pkg_name" "PARSE_FAIL(build.sh)" >> "$TASKS_FILE"
@@ -214,29 +218,64 @@ check_one_url() {
     return 0
   fi
 
-  local http_code curl_exit
+  local ua="termux-packages-srcurl-checker/1.0 (+https://github.com/termux/termux-packages)"
 
-  # Avoid "set -e" exiting on curl failures.
+  # We try multiple strategies because some servers:
+  # - reject Range requests (400/415/etc)
+  # - reject HEAD requests
+  # - are flaky / slow (timeouts)
+  local http_code curl_exit result
+
+  _classify() {
+    local code="$1" exit_code="$2"
+    if [[ "$exit_code" -ne 0 ]]; then
+      echo "CURL_ERROR"; return 0
+    fi
+    case "$code" in
+      2*|3*) echo "OK";;
+      404) echo "HTTP_404";;
+      410) echo "HTTP_410";;
+      5*) echo "HTTP_5XX";;
+      ""|000) echo "NO_HTTP_CODE";;
+      *) echo "HTTP_${code}";;
+    esac
+  }
+
+  # Attempt 1: HEAD (fast, no body)
   set +e
-  http_code=$(curl -L -r 0-0 -o /dev/null -sS -w '%{http_code}' \
-    --connect-timeout 7 --max-time 25 --retry 0 "$url")
+  http_code=$(curl -I -L -o /dev/null -sS -w '%{http_code}' \
+    -A "$ua" --connect-timeout 7 --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
+    "$url")
   curl_exit=$?
   set -e
+  result=$(_classify "$http_code" "$curl_exit")
 
-  local result
-  if [[ $curl_exit -ne 0 ]]; then
-    result="CURL_ERROR"
-    # http_code from curl is not meaningful on failures; normalize.
+  # Attempt 2: Range GET (many servers return 206)
+  if [[ "$result" != "OK" ]]; then
+    set +e
+    http_code=$(curl -L -r 0-0 -o /dev/null -sS -w '%{http_code}' \
+      -A "$ua" --connect-timeout 7 --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
+      "$url")
+    curl_exit=$?
+    set -e
+    result=$(_classify "$http_code" "$curl_exit")
+  fi
+
+  # Attempt 3: Small GET (no range) with max size guard (covers servers that reject Range)
+  if [[ "$result" != "OK" ]]; then
+    set +e
+    http_code=$(curl -L -o /dev/null -sS -w '%{http_code}' \
+      -A "$ua" --connect-timeout 7 --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
+      --max-filesize 1048576 \
+      "$url")
+    curl_exit=$?
+    set -e
+    result=$(_classify "$http_code" "$curl_exit")
+  fi
+
+  # Normalize http_code for curl errors.
+  if [[ "$result" == "CURL_ERROR" ]]; then
     http_code=""
-  else
-    case "$http_code" in
-      2*|3*) result="OK";;
-      404) result="HTTP_404";;
-      410) result="HTTP_410";;
-      5*) result="HTTP_5XX";;
-      ""|000) result="NO_HTTP_CODE";;
-      *) result="HTTP_${http_code}";;
-    esac
   fi
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "$result" "$http_code" "$curl_exit"
