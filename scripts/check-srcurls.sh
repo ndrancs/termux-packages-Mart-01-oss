@@ -182,6 +182,14 @@ collect_urls_for_build_sh() {
       | sort -u || true)
 
     if [[ -z "${urls:-}" ]]; then
+      # Many packages intentionally don't have sources (repo metapackages, on-device helpers, etc.).
+      # If build.sh declares it doesn't need source extraction, treat it as a skip.
+      if grep -q '^TERMUX_PKG_SKIP_SRC_EXTRACT=true' "$build_sh" \
+        || grep -q '^TERMUX_PKG_METAPACKAGE=true' "$build_sh" \
+        || grep -q '^TERMUX_PKG_PLATFORM_INDEPENDENT=true' "$build_sh"; then
+        printf '%s\t%s\t%s\n' "$repo_path" "$pkg_name" "SKIP_NO_SOURCE" >> "$TASKS_FILE"
+        return 0
+      fi
       printf '%s\t%s\t%s\n' "$repo_path" "$pkg_name" "PARSE_FAIL(build.sh)" >> "$TASKS_FILE"
       return 0
     fi
@@ -210,6 +218,11 @@ check_one_url() {
 
   if [[ "$url" == PARSE_FAIL* ]]; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "PARSE_FAIL" "" ""
+    return 0
+  fi
+
+  if [[ "$url" == SKIP_NO_SOURCE ]]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$pkg" "$url" "SKIP_NO_SOURCE" "" ""
     return 0
   fi
 
@@ -261,12 +274,11 @@ check_one_url() {
     result=$(_classify "$http_code" "$curl_exit")
   fi
 
-  # Attempt 3: Small GET (no range) with max size guard (covers servers that reject Range)
+  # Attempt 3: GET only the first 1MiB (covers servers that reject Range 0-0, and avoids curl exit=63 from --max-filesize)
   if [[ "$result" != "OK" ]]; then
     set +e
-    http_code=$(curl -L -o /dev/null -sS -w '%{http_code}' \
-      -A "$ua" --connect-timeout 7 --max-time 25 --retry 2 --retry-all-errors --retry-delay 1 \
-      --max-filesize 1048576 \
+    http_code=$(curl -L --range 0-1048575 -o /dev/null -sS -w '%{http_code}' \
+      -A "$ua" --connect-timeout 7 --max-time 35 --retry 2 --retry-all-errors --retry-delay 1 \
       "$url")
     curl_exit=$?
     set -e
@@ -291,11 +303,11 @@ done < "$TASKS_FILE" \
   >> "$REPORT_TSV"
 
 # Produce failures list.
-awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {print}' "$REPORT_TSV" > "$FAILURES_TSV" || true
+awk -F'\t' 'NR==1{next} $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" && $4!="SKIP_NO_SOURCE" {print}' "$REPORT_TSV" > "$FAILURES_TSV" || true
 
 ok_count=$(awk -F'\t' 'NR>1 && $4=="OK"{c++} END{print c+0}' "$REPORT_TSV")
-fail_count=$(awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
-skip_count=$(awk -F'\t' 'NR>1 && $4=="SKIP_UNSUPPORTED_SCHEME"{c++} END{print c+0}' "$REPORT_TSV")
+fail_count=$(awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" && $4!="SKIP_NO_SOURCE"{c++} END{print c+0}' "$REPORT_TSV")
+skip_count=$(awk -F'\t' 'NR>1 && ($4=="SKIP_UNSUPPORTED_SCHEME" || $4=="SKIP_NO_SOURCE"){c++} END{print c+0}' "$REPORT_TSV")
 eval_fail_count=$(awk -F'\t' 'NR>1 && $4=="EVAL_FAIL"{c++} END{print c+0}' "$REPORT_TSV")
 
 # Markdown report
@@ -312,14 +324,14 @@ eval_fail_count=$(awk -F'\t' 'NR>1 && $4=="EVAL_FAIL"{c++} END{print c+0}' "$REP
   echo
   echo "- OK: $ok_count"
   echo "- Fail: $fail_count"
-  echo "- Skipped (non-http/https): $skip_count"
+  echo "- Skipped (non-http/https or no-source): $skip_count"
   echo "- Eval failures: $eval_fail_count"
   echo
   echo "## Failures (first 200)"
   echo
   echo "| repo | pkg | result | http | url |"
   echo "|---|---:|---:|---:|---|"
-  awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" {
+  awk -F'\t' 'NR>1 && $4!="OK" && $4!="SKIP_UNSUPPORTED_SCHEME" && $4!="SKIP_NO_SOURCE" {
       gsub(/\|/,"\\|",$3);
       printf("| %s | %s | %s | %s | %s |\n", $1, $2, $4, $5, $3);
     }' "$REPORT_TSV" | head -n 200
