@@ -4,8 +4,9 @@ TERMUX_PKG_LICENSE="Apache-2.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION=2.26
 TERMUX_PKG_REVISION=1
-TERMUX_PKG_SRCURL=https://repo.or.cz/alpine.git/snapshot/alpine-${TERMUX_PKG_VERSION}.tar.gz
-TERMUX_PKG_SHA256=4cc99bcf6458b7458a97f2c855ceee5d6ecea104356840482c22b04323c965ac
+# repo.or.cz snapshots are not always reliably accessible from CI; use Debian orig tarball mirror.
+TERMUX_PKG_SRCURL=https://deb.debian.org/debian/pool/main/a/alpine/alpine_${TERMUX_PKG_VERSION}+dfsg.orig.tar.xz
+TERMUX_PKG_SHA256=01fb78bd03e469bccd799db7c2b414e2bb816dbadd2d66170ae0e8be60415aa3
 TERMUX_PKG_DEPENDS="coreutils, libcrypt, ncurses, openssl, openssl-tool"
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 --disable-debug
