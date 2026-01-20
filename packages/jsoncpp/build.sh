@@ -54,6 +54,12 @@ termux_step_post_make_install() {
 	local compat_dir="$TERMUX_PREFIX/include/jsoncpp/json"
 
 	if [ -d "$src_dir" ]; then
+		# Some CMake find modules look specifically for json/features.h.
+		# Newer jsoncpp installs json_features.h instead, so provide a compat symlink.
+		if [ -f "$src_dir/json_features.h" ] && [ ! -e "$src_dir/features.h" ]; then
+			ln -sf "json_features.h" "$src_dir/features.h"
+		fi
+
 		mkdir -p "$compat_dir"
 		for header in "$src_dir"/*.h; do
 			[ -e "$header" ] || continue
