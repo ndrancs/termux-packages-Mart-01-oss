@@ -21,9 +21,13 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DCMAKE_USE_SYSTEM_FORM=ON
 -DCMAKE_USE_SYSTEM_JSONCPP=ON
 # Help CMake's FindJsonCpp.cmake locate Termux-installed jsoncpp.
-# Termux jsoncpp typically installs headers under $PREFIX/include/json/.
--DJsonCpp_INCLUDE_DIR=${TERMUX_PREFIX}/include/json
+# jsoncpp installs headers as $PREFIX/include/json/*.h (e.g. <json/json.h>),
+# so the include dir must be $PREFIX/include (not $PREFIX/include/json).
+-DJsonCpp_INCLUDE_DIR=${TERMUX_PREFIX}/include
 -DJsonCpp_LIBRARY=${TERMUX_PREFIX}/lib/libjsoncpp.so
+# Some FindJsonCpp variants use JSONCPP_* variables.
+-DJSONCPP_INCLUDE_DIR=${TERMUX_PREFIX}/include
+-DJSONCPP_LIBRARY=${TERMUX_PREFIX}/lib/libjsoncpp.so
 -DCMAKE_USE_SYSTEM_LIBARCHIVE=ON
 -DCMAKE_USE_SYSTEM_LIBRHASH=ON
 # Help CMake's FindLibRHash.cmake locate Termux-installed librhash.
