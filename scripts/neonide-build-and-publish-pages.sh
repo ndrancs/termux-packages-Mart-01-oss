@@ -293,6 +293,73 @@ echo "[*] Regenerating Packages and Packages.gz from pool..."
   cd "$PAGES_REPO_DIR"
   mkdir -p dists/stable/main/binary-aarch64
   dpkg-scanpackages -m pool /dev/null > dists/stable/main/binary-aarch64/Packages
+
+  # Optional: add SHA512 per package stanza.
+  # dpkg-scanpackages typically emits MD5sum/SHA1/SHA256 only. If you want SHA512
+  # in each package entry (like Termux Release has), enable this.
+  : "${NEONIDE_PACKAGES_INCLUDE_SHA512:=false}"
+  if [[ "$NEONIDE_PACKAGES_INCLUDE_SHA512" == "true" ]]; then
+    echo "[*] Adding SHA512 field to Packages entries..."
+    python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+packages_path = Path('dists/stable/main/binary-aarch64/Packages')
+text = packages_path.read_text(encoding='utf-8', errors='replace').strip()
+if not text:
+    raise SystemExit(0)
+
+blocks = text.split('\n\n')
+out_blocks = []
+
+for b in blocks:
+    lines = b.splitlines()
+
+    # Skip if already has SHA512
+    if any(l.startswith('SHA512: ') for l in lines):
+        out_blocks.append(b)
+        continue
+
+    filename = None
+    for ln in lines:
+        if ln.startswith('Filename: '):
+            filename = ln.split(': ', 1)[1].strip()
+            break
+
+    if not filename:
+        out_blocks.append(b)
+        continue
+
+    deb_path = Path(filename)
+    if not deb_path.exists():
+        deb_path = Path('.') / filename
+
+    if not deb_path.exists():
+        out_blocks.append(b)
+        continue
+
+    h = hashlib.sha512()
+    with deb_path.open('rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    sha512 = h.hexdigest()
+
+    new_lines = []
+    inserted = False
+    for ln in lines:
+        new_lines.append(ln)
+        if ln.startswith('SHA256: '):
+            new_lines.append(f'SHA512: {sha512}')
+            inserted = True
+    if not inserted:
+        new_lines.append(f'SHA512: {sha512}')
+
+    out_blocks.append('\n'.join(new_lines))
+
+packages_path.write_text('\n\n'.join(out_blocks) + '\n', encoding='utf-8')
+PY
+  fi
+
   gzip -9 -c dists/stable/main/binary-aarch64/Packages > dists/stable/main/binary-aarch64/Packages.gz
 )
 
