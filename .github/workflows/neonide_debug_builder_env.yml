@@ -148,17 +148,22 @@ jobs:
             done
           '
 
-      - name: Debug system libs (JsonCpp / RHash) inside container prefix
+      - name: Debug JsonCpp detection (reproduce cmake configure + inspect prefix)
         run: |
           set -euo pipefail
           ./scripts/run-docker.sh bash -lc '
             set -euo pipefail
             cd "$HOME/termux-packages"
 
-            # These vars match neonide-build-and-publish-pages.sh behavior:
+            # Match neonide-build-and-publish-pages.sh behavior so -i is not ignored.
             export TERMUX_REPO_APP__PACKAGE_NAME="com.neonide.studio"
 
-            # Load Termux build properties (sets TERMUX_APP_PACKAGE + TERMUX_PREFIX):
+            # Optional: allow unsigned repos + add official Termux repo as fallback
+            export TERMUX_ALLOW_UNVERIFIED_REPOS="true"
+            export TERMUX_EXTRA_REPO_URL="https://packages-cf.termux.dev/apt/termux-main"
+            export TERMUX_EXTRA_REPO_DISTRIBUTION="stable"
+            export TERMUX_EXTRA_REPO_COMPONENT="main"
+
             . ./scripts/properties.sh
 
             echo "=== Termux app package / prefix ==="
@@ -166,22 +171,36 @@ jobs:
             echo "TERMUX_REPO_APP__PACKAGE_NAME=${TERMUX_REPO_APP__PACKAGE_NAME:-}"
             echo "TERMUX_PREFIX=${TERMUX_PREFIX:-}"
 
-            echo "=== jsoncpp files ==="
-            ls -la "${TERMUX_PREFIX}/lib" | grep -i jsoncpp || true
-            ls -la "${TERMUX_PREFIX}/include/json" 2>/dev/null | head -n 80 || true
-            test -f "${TERMUX_PREFIX}/include/json/json.h" && echo "OK: ${TERMUX_PREFIX}/include/json/json.h exists" || echo "MISSING: ${TERMUX_PREFIX}/include/json/json.h"
+            echo "=== STEP 1: Trigger dependency extraction by attempting cmake build (expected to fail) ==="
+            set +e
+            ./build-package.sh -i -a aarch64 cmake
+            rc=$?
+            set -e
+            echo "cmake build exit code: $rc (expected non-zero while debugging)"
 
-            echo "=== rhash files ==="
-            ls -la "${TERMUX_PREFIX}/lib" | grep -E "rhash|librhash" || true
-            find "${TERMUX_PREFIX}/include" -maxdepth 3 -type f | grep -i rhash | head -n 80 || true
+            echo "=== STEP 2: Inspect jsoncpp/rhash under TERMUX_PREFIX (after dependency extraction) ==="
+            echo "--- lib dir ---"
+            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | head -n 200 || true
 
-            echo "=== pkg-config (if available) ==="
-            command -v pkg-config >/dev/null && {
-              pkg-config --modversion jsoncpp 2>/dev/null || true
-              pkg-config --cflags --libs jsoncpp 2>/dev/null || true
-              pkg-config --modversion rhash 2>/dev/null || true
-              pkg-config --cflags --libs rhash 2>/dev/null || true
-            } || echo "pkg-config not found"
+            echo "--- json include dir ---"
+            ls -la "${TERMUX_PREFIX}/include/json" 2>/dev/null | head -n 200 || true
+            for f in json.h json_features.h features.h version.h; do
+              if [ -e "${TERMUX_PREFIX}/include/json/$f" ]; then
+                echo "OK: ${TERMUX_PREFIX}/include/json/$f exists"
+              else
+                echo "MISSING: ${TERMUX_PREFIX}/include/json/$f"
+              fi
+            done
+
+            echo "--- jsoncpp compatibility include dir ---"
+            ls -la "${TERMUX_PREFIX}/include/jsoncpp/json" 2>/dev/null | head -n 200 || true
+
+            echo "--- rhash headers ---"
+            find "${TERMUX_PREFIX}/include" -maxdepth 3 -type f 2>/dev/null | grep -i rhash | head -n 80 || true
+
+            echo "=== STEP 3: Dump CMakeCache and error logs from the failing build (if present) ==="
+            find "$HOME/.termux-build" -path "*cmake*" -name CMakeCache.txt -print -exec sh -lc "echo '--- '; tail -n 120 \"$1\"" _ {} \; 2>/dev/null || true
+            find "$HOME/.termux-build" -path "*cmake*" -name CMakeError.log -print -exec sh -lc "echo '--- '; tail -n 200 \"$1\"" _ {} \; 2>/dev/null || true
           '
 
       - name: Docker cleanup (always)
