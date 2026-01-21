@@ -171,7 +171,24 @@ jobs:
             echo "TERMUX_REPO_APP__PACKAGE_NAME=${TERMUX_REPO_APP__PACKAGE_NAME:-}"
             echo "TERMUX_PREFIX=${TERMUX_PREFIX:-}"
 
-            echo "=== STEP 1: Trigger dependency extraction by attempting cmake build (expected to fail) ==="
+            echo "=== STEP 1: Ensure libuv is present (library + headers) ==="
+            echo "--- pre-check: libuv files in prefix ---"
+            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | grep -i uv || true
+            ls -la "${TERMUX_PREFIX}/include" 2>/dev/null | grep -E "uv(\\.h)?$" || true
+            ls -la "${TERMUX_PREFIX}/include/uv.h" 2>/dev/null || true
+
+            echo "--- Attempt to build/download libuv explicitly (debug) ---"
+            set +e
+            ./build-package.sh -i -a aarch64 libuv
+            libuv_rc=$?
+            set -e
+            echo "libuv build exit code: $libuv_rc (0 means it succeeded)"
+
+            echo "--- post-check: libuv files in prefix ---"
+            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | grep -i uv || true
+            find "${TERMUX_PREFIX}/lib" -maxdepth 1 -type f -name 'libuv*' 2>/dev/null | head -n 50 || true
+
+            echo "=== STEP 2: Trigger dependency extraction by attempting cmake build (expected to fail) ==="
             set +e
             ./build-package.sh -i -a aarch64 cmake
             rc=$?
