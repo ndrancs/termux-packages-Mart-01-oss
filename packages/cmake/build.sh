@@ -13,9 +13,8 @@ TERMUX_PKG_DEPENDS="libarchive, libc++, libcurl, libexpat, jsoncpp, libuv, rhash
 TERMUX_PKG_RECOMMENDS="clang, make"
 TERMUX_PKG_FORCE_CMAKE=true
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
-# Ensure CMake searches Termux prefix first (avoid picking host /usr/include/json).
 -DCMAKE_PREFIX_PATH=${TERMUX_PREFIX}
--DCMAKE_INCLUDE_PATH=${TERMUX_PREFIX}/include/uv
+-DCMAKE_INCLUDE_PATH=${TERMUX_PREFIX}/include
 -DCMAKE_LIBRARY_PATH=${TERMUX_PREFIX}/lib
 -DSPHINX_MAN=ON
 -DCMAKE_MAN_DIR=share/man
@@ -24,27 +23,17 @@ TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -DCMAKE_USE_SYSTEM_EXPAT=ON
 -DCMAKE_USE_SYSTEM_FORM=ON
 -DCMAKE_USE_SYSTEM_JSONCPP=ON
-# Help CMake's FindJsonCpp.cmake locate Termux-installed jsoncpp.
-# jsoncpp installs headers as $PREFIX/include/json/*.h (e.g. <json/json.h>),
-# so the include dir must be $PREFIX/include (not $PREFIX/include/json).
-# CMake's built-in FindJsonCpp.cmake expects JsonCpp_INCLUDE_DIR to be the
-# directory that contains json/json.h (so it can also read json/version.h).
 -DJsonCpp_INCLUDE_DIR=${TERMUX_PREFIX}/include
 -DJsonCpp_LIBRARY=${TERMUX_PREFIX}/lib/libjsoncpp.so
-# Some FindJsonCpp variants use JSONCPP_* variables.
 -DJSONCPP_INCLUDE_DIR=${TERMUX_PREFIX}/include
 -DJSONCPP_LIBRARY=${TERMUX_PREFIX}/lib/libjsoncpp.so
 -DCMAKE_USE_SYSTEM_LIBARCHIVE=ON
 -DCMAKE_USE_SYSTEM_LIBRHASH=ON
-# Help CMake's FindLibRHash.cmake locate Termux-installed librhash.
-# RHash installs headers under $PREFIX/include/librhash/.
 -DLibRHash_INCLUDE_DIR=${TERMUX_PREFIX}/include/librhash
 -DLibRHash_LIBRARY=${TERMUX_PREFIX}/lib/librhash.so
 -DCMAKE_USE_SYSTEM_LIBUV=ON
-# Help CMake's FindLibUV.cmake locate Termux-installed libuv.
 -DLibUV_INCLUDE_DIR=${TERMUX_PREFIX}/include
 -DLibUV_LIBRARY=${TERMUX_PREFIX}/lib/libuv.so
--DLibUV_VERSION=1.51.0-1
 -DCMAKE_USE_SYSTEM_ZLIB=ON
 -DBUILD_CursesDialog=ON"
 
@@ -66,7 +55,11 @@ termux_step_pre_configure() {
 		_uv_minor=$(grep -m1 -E '^#define[[:space:]]+UV_VERSION_MINOR[[:space:]]+' "${_uv_version_h}" | awk '{print $3}')
 		_uv_patch=$(grep -m1 -E '^#define[[:space:]]+UV_VERSION_PATCH[[:space:]]+' "${_uv_version_h}" | awk '{print $3}')
 		if [ -n "${_uv_major}" ] && [ -n "${_uv_minor}" ] && [ -n "${_uv_patch}" ]; then
-			TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DLibUV_VERSION=${_uv_major}.${_uv_minor}.${_uv_patch}"
+			# CMake's FindLibUV.cmake uses variable name LibUV_VERSION.
+			# We pass it explicitly to avoid version detection failures.
+			if [[ " ${TERMUX_PKG_EXTRA_CONFIGURE_ARGS} " != *" -DLibUV_VERSION="* ]]; then
+				TERMUX_PKG_EXTRA_CONFIGURE_ARGS+=" -DLibUV_VERSION=${_uv_major}.${_uv_minor}.${_uv_patch}"
+			fi
 		fi
 	fi
 }
