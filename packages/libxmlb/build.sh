@@ -7,19 +7,26 @@ TERMUX_PKG_SRCURL=https://github.com/hughsie/libxmlb/releases/download/${TERMUX_
 TERMUX_PKG_SHA256=ded52667aac942bb1ff4d1e977e8274a9432d99033d86918feb82ade82b8e001
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="glib, liblzma, libstemmer, zstd"
-# libxmlb enables GObject Introspection in TERMUX_PKG_EXTRA_CONFIGURE_ARGS,
-# so we need the gobject-introspection pkg-config files available at build time.
-# Meson may also try CMake as a fallback for some deps.
-TERMUX_PKG_BUILD_DEPENDS="cmake, g-ir-scanner, glib-cross, gobject-introspection"
+
+# NOTE: GObject Introspection generally does not work for cross-compiling and
+# requires gobject-introspection-1.0 (pkg-config) to be available in the build
+# environment. In CI this commonly causes:
+#   ERROR: Dependency "gobject-introspection-1.0" not found, tried pkgconfig
+#
+# We disable introspection to keep the build reproducible.
+TERMUX_PKG_DISABLE_GIR=true
 TERMUX_PKG_VERSIONED_GIR=false
-TERMUX_PKG_DISABLE_GIR=false
+
+# Meson sometimes probes for host tools like CMake during configuration.
+TERMUX_PKG_BUILD_DEPENDS="glib-cross"
+
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 -Dgtkdoc=false
--Dintrospection=true
+-Dintrospection=false
 -Dstemmer=true
 -Dtests=false
 "
 
 termux_step_pre_configure() {
-	termux_setup_gir
+	termux_setup_cmake
 }

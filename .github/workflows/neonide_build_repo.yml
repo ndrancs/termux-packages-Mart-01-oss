@@ -118,6 +118,8 @@ jobs:
           DESIRED_PACKAGES_SOURCE: recipes
           # Allow using unsigned repo metadata for custom pages repo (fallback official repo still verified)
           TERMUX_ALLOW_UNVERIFIED_REPOS: "true"
+          # Allow matching when only Debian revision differs (e.g. repo has 4.2.2 but dep expects 4.2.2-1)
+          TERMUX_ALLOW_REVISION_MISMATCH: "true"
           # Add official Termux main repo as fallback for dependency downloads
           TERMUX_EXTRA_REPO_URL: "https://packages-cf.termux.dev/apt/termux-main"
           TERMUX_EXTRA_REPO_DISTRIBUTION: "stable"
