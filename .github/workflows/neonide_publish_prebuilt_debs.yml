@@ -79,6 +79,7 @@ jobs:
           echo "Downloading: $url"
           fname="$(basename "$url")"
           curl -LfsS "$url" -o "prebuilt-debs/$fname"
+          echo "Downloaded sha256: $(sha256sum "prebuilt-debs/$fname" | awk '{print $1}')"
 
           if [ -n '${{ inputs.deb_url_sha256 }}' ]; then
             echo "Verifying sha256..."

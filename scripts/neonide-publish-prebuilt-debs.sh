@@ -153,9 +153,16 @@ for deb in "$DEBS_DIR"/*.deb; do
   deb_depends="$(deb_field "$deb" Depends)"
   deb_recommends="$(deb_field "$deb" Recommends)"
 
-  if [[ -n "$recipe_maint" && -n "$deb_maint" && "$deb_maint" != *"$recipe_maint"* ]]; then
-    echo "[!] MISMATCH $pkg: Maintainer\n    recipe: $recipe_maint\n    deb:    $deb_maint" >&2
-    mismatch=1
+  # TERMUX_PKG_MAINTAINER is often a GitHub handle like "@termux".
+  # Debian control Maintainer is typically an email/name. Treat mismatches as informational
+  # unless the recipe maintainer looks like an email.
+  if [[ -n "$recipe_maint" && -n "$deb_maint" ]]; then
+    if [[ "$recipe_maint" == *"@"* && "$deb_maint" != *"$recipe_maint"* ]]; then
+      echo "[!] MISMATCH $pkg: Maintainer\n    recipe: $recipe_maint\n    deb:    $deb_maint" >&2
+      mismatch=1
+    else
+      :
+    fi
   fi
   if [[ -n "$recipe_homepage" && -n "$deb_homepage" && "$deb_homepage" != "$recipe_homepage" ]]; then
     echo "[!] MISMATCH $pkg: Homepage\n    recipe: $recipe_homepage\n    deb:    $deb_homepage" >&2
@@ -175,7 +182,11 @@ for deb in "$DEBS_DIR"/*.deb; do
 
   dest_path="$dest_dir/$(basename "$deb")"
 
-  if [[ -f "$dest_path" && "$FORCE_OVERWRITE" != "true" ]]; then
+  if [[ "$FORCE_OVERWRITE" == "true" ]]; then
+    # Force mode: remove older debs for this package so the pool doesn't
+    # accumulate multiple versions and so metadata updates clearly.
+    rm -f "$dest_dir/${pkg}_"*.deb 2>/dev/null || true
+  elif [[ -f "$dest_path" ]]; then
     src_sha="$(sha256sum "$deb" | awk '{print $1}')"
     dst_sha="$(sha256sum "$dest_path" | awk '{print $1}')"
     if [[ "$src_sha" == "$dst_sha" ]]; then
