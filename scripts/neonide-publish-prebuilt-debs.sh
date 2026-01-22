@@ -96,7 +96,16 @@ recipe_field() {
   [[ -z "$script" ]] && return 0
 
   # shellcheck disable=SC1090
-  ( source "$script";
+  (
+    # Package recipes sometimes reference TERMUX_PREFIX/TERMUX_SCRIPTDIR etc.
+    # When this script runs in GitHub Actions, those are not set. Also, this
+    # script uses 'set -u', so we must provide safe defaults.
+    set +u
+    : "${TERMUX_PREFIX:=/data/data/com.neonide.studio/files/usr}"
+    : "${TERMUX_SCRIPTDIR:=$PWD}"
+    source "$script"
+    set -u
+
     case "$field" in
       homepage) echo "${TERMUX_PKG_HOMEPAGE:-}";;
       description) echo "${TERMUX_PKG_DESCRIPTION:-}";;
