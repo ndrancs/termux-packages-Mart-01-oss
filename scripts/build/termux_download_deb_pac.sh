@@ -15,12 +15,18 @@ termux_download_deb_pac() {
 	PKG_HASH=""
 
 	# Dependencies should be used from repo only if they are built for
-	# same package name.
-	# The data.tar.xz extraction by termux_step_get_dependencies would
-	# extract files to different prefix than TERMUX_PREFIX and builds
-	# would fail when looking for -I$TERMUX_PREFIX/include files.
+	# same runtime paths as the current build environment.
+	#
+	# The data.tar.xz extraction by termux_step_get_dependencies extracts files
+	# directly into /, so if repo packages were built for a different TERMUX_PREFIX
+	# (e.g. /data/data/com.termux/files/usr vs /data/data/com.neonide.studio/files/usr),
+	# builds will fail when searching headers/libs under $TERMUX_PREFIX.
 	if [ "$TERMUX_REPO_APP__PACKAGE_NAME" != "$TERMUX_APP_PACKAGE" ]; then
 		echo "Ignoring download of $PKG_FILE since repo package name ($TERMUX_REPO_APP__PACKAGE_NAME) does not equal app package name ($TERMUX_APP_PACKAGE)"
+		return 1
+	fi
+	if [ "${TERMUX_REPO__PREFIX:-}" != "${TERMUX_PREFIX:-}" ]; then
+		echo "Ignoring download of $PKG_FILE since repo prefix (${TERMUX_REPO__PREFIX:-<unset>}) does not equal build prefix (${TERMUX_PREFIX:-<unset>})"
 		return 1
 	fi
 

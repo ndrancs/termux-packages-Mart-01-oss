@@ -148,121 +148,55 @@ jobs:
             done
           '
 
-      - name: Debug JsonCpp detection (reproduce cmake configure + inspect prefix)
+      - name: Debug dpkg failure (reproduce dpkg configure + inspect md5/libmd)
         run: |
           set -euo pipefail
           ./scripts/run-docker.sh bash -lc '
             set -euo pipefail
             cd "$HOME/termux-packages"
 
-            # Match neonide-build-and-publish-pages.sh behavior so -i is not ignored.
+            # Match NeonIDE build behavior.
             export TERMUX_REPO_APP__PACKAGE_NAME="com.neonide.studio"
-
-            # Optional: allow unsigned repos + add official Termux repo as fallback
+            export TERMUX_USE_OFFICIAL_REPO_FALLBACK="false"
             export TERMUX_ALLOW_UNVERIFIED_REPOS="true"
-            export TERMUX_EXTRA_REPO_URL="https://packages-cf.termux.dev/apt/termux-main"
-            export TERMUX_EXTRA_REPO_DISTRIBUTION="stable"
-            export TERMUX_EXTRA_REPO_COMPONENT="main"
 
             . ./scripts/properties.sh
 
-            echo "=== Termux app package / prefix ==="
+            echo "=== Termux app package / repo / prefix ==="
             echo "TERMUX_APP_PACKAGE=${TERMUX_APP_PACKAGE:-}"
             echo "TERMUX_REPO_APP__PACKAGE_NAME=${TERMUX_REPO_APP__PACKAGE_NAME:-}"
             echo "TERMUX_PREFIX=${TERMUX_PREFIX:-}"
+            echo "TERMUX_REPO__PREFIX=${TERMUX_REPO__PREFIX:-}"
 
-            echo "=== STEP 1: Ensure libuv is present (library + headers) ==="
-            echo "--- pre-check: libuv files in prefix ---"
-            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | grep -i uv || true
-            ls -la "${TERMUX_PREFIX}/include" 2>/dev/null | grep -E "uv(\\.h)?$" || true
-            ls -la "${TERMUX_PREFIX}/include/uv.h" 2>/dev/null || true
+            echo "=== STEP 0: Show whether md5.h exists under TERMUX_PREFIX ==="
+            ls -la "${TERMUX_PREFIX}/include/md5.h" 2>/dev/null || true
+            ls -la "${TERMUX_PREFIX}/include" 2>/dev/null | grep -E "md5\.h|sha1\.h|sha2\.h" || true
 
-            echo "--- Attempt to build/download libuv explicitly (debug) ---"
+            echo "=== STEP 1: Force/build dpkg with -i (to reproduce CI behavior) ==="
             set +e
-            ./build-package.sh -i -a aarch64 libuv
-            libuv_rc=$?
-            set -e
-            echo "libuv build exit code: $libuv_rc (0 means it succeeded)"
-
-            echo "--- post-check: libuv files in prefix ---"
-            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | grep -i uv || true
-            find "${TERMUX_PREFIX}/lib" -maxdepth 1 -type f -name 'libuv*' 2>/dev/null | head -n 50 || true
-
-            echo "=== DEBUG: LibUV detection context (prefix/files/pkg-config/permissions) ==="
-            echo "TERMUX_PREFIX=${TERMUX_PREFIX:-}"
-            echo "PREFIX=${PREFIX:-}"
-            echo "PATH=$PATH"
-            echo
-
-            echo "--- libuv headers ---"
-            ls -la "${TERMUX_PREFIX}/include/uv.h" 2>/dev/null || true
-            ls -la "${TERMUX_PREFIX}/include/uv/uv.h" 2>/dev/null || true
-            ls -la "${TERMUX_PREFIX}/include/uv/version.h" 2>/dev/null || true
-            # show version defines if headers exist
-            if [ -f "${TERMUX_PREFIX}/include/uv/version.h" ]; then
-              echo "--- uv/version.h defines ---"
-              grep -nE "UV_VERSION_(MAJOR|MINOR|PATCH)|UV_VERSION_HEX" "${TERMUX_PREFIX}/include/uv/version.h" | head -n 50 || true
-            fi
-            echo
-
-            echo "--- libuv library ---"
-            ls -la "${TERMUX_PREFIX}/lib/libuv.so"* 2>/dev/null || true
-            file "${TERMUX_PREFIX}/lib/libuv.so" 2>/dev/null || true
-            echo
-
-            echo "--- libuv pkg-config ---"
-            ls -la "${TERMUX_PREFIX}/lib/pkgconfig/libuv.pc" 2>/dev/null || true
-            if command -v pkg-config >/dev/null 2>&1; then
-              echo "pkg-config: $(command -v pkg-config)"
-              echo "PKG_CONFIG=${PKG_CONFIG:-}"
-              echo "PKG_CONFIG_LIBDIR=${PKG_CONFIG_LIBDIR:-}"
-              echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}"
-              echo "-- forcing PKG_CONFIG_PATH to TERMUX_PREFIX --"
-              PKG_CONFIG_PATH="${TERMUX_PREFIX}/lib/pkgconfig:${TERMUX_PREFIX}/share/pkgconfig" pkg-config --modversion libuv || true
-              PKG_CONFIG_PATH="${TERMUX_PREFIX}/lib/pkgconfig:${TERMUX_PREFIX}/share/pkgconfig" pkg-config --cflags --libs libuv || true
-            else
-              echo "pkg-config not available"
-            fi
-            echo
-
-            echo "=== STEP 2: Trigger dependency extraction by attempting cmake build (expected to fail) ==="
-            set +e
-            ./build-package.sh -i -a aarch64 cmake
+            ./build-package.sh -i -a aarch64 dpkg
             rc=$?
             set -e
-            echo "cmake build exit code: $rc (expected non-zero while debugging)"
+            echo "dpkg build exit code: $rc"
 
-            echo "=== STEP 2: Inspect jsoncpp/rhash under TERMUX_PREFIX (after dependency extraction) ==="
-            echo "--- lib dir ---"
-            ls -la "${TERMUX_PREFIX}/lib" 2>/dev/null | head -n 200 || true
+            echo "=== STEP 2: If dpkg failed, dump key logs (configure/config.log) ==="
+            builddir="$HOME/.termux-build/dpkg/build"
+            if [ -f "$builddir/config.log" ]; then
+              echo "--- $builddir/config.log (tail 250) ---"
+              tail -n 250 "$builddir/config.log" || true
+              echo "--- config.log md5-related lines ---"
+              grep -nE "md5|digest|libmd" "$builddir/config.log" | tail -n 200 || true
+            else
+              echo "No config.log found at $builddir/config.log"
+            fi
 
-            echo "--- json include dir ---"
-            ls -la "${TERMUX_PREFIX}/include/json" 2>/dev/null | head -n 200 || true
-            for f in json.h json_features.h features.h version.h; do
-              if [ -e "${TERMUX_PREFIX}/include/json/$f" ]; then
-                echo "OK: ${TERMUX_PREFIX}/include/json/$f exists"
-              else
-                echo "MISSING: ${TERMUX_PREFIX}/include/json/$f"
-              fi
-            done
+            echo "=== STEP 3: Show downloaded dependency guards (if any) ==="
+            # build-package.sh / termux_download_deb_pac.sh will print these when guarding downloads.
+            # Keep a simple grep over the build output directory if it exists.
+            find "$HOME/.termux-build" -maxdepth 3 -type f -name "*.log" 2>/dev/null | head -n 20 || true
 
-            echo "--- jsoncpp compatibility include dir ---"
-            ls -la "${TERMUX_PREFIX}/include/jsoncpp/json" 2>/dev/null | head -n 200 || true
-
-            echo "--- rhash headers ---"
-            find "${TERMUX_PREFIX}/include" -maxdepth 3 -type f 2>/dev/null | grep -i rhash | head -n 80 || true
-
-            echo "=== STEP 3: Dump CMakeCache and error logs from the failing build (if present) ==="
-
-            for f in $(find "$HOME/.termux-build" -path "*cmake*" -name CMakeCache.txt 2>/dev/null); do
-              echo "--- $f ---"
-              tail -n 120 "$f" || true
-            done
-
-            for f in $(find "$HOME/.termux-build" -path "*cmake*" -name CMakeError.log 2>/dev/null); do
-              echo "--- $f ---"
-              tail -n 200 "$f" || true
-            done
+            echo "=== STEP 4: Print dpkg recipe deps (sanity) ==="
+            sed -n "1,80p" packages/dpkg/build.sh || true
           '
 
       - name: Docker cleanup (always)

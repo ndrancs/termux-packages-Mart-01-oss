@@ -2182,13 +2182,13 @@ TERMUX_AM_APP__AM_CLASS__CLASS_NAME="$TERMUX_AM_APP__NAMESPACE.Am"
 # changes pull, currently only `TERMUX_REPO_APP__PACKAGE_NAME` is checked.
 #
 # NOTE: These are overridable via environment (useful for CI forks like NeonIDE).
-: "${TERMUX_REPO_APP__PACKAGE_NAME:="com.termux"}"
-: "${TERMUX_REPO_APP__DATA_DIR:="/data/data/com.termux"}"
-: "${TERMUX_REPO__CORE_DIR:="/data/data/com.termux/termux/core"}"
-: "${TERMUX_REPO__APPS_DIR:="/data/data/com.termux/termux/app"}"
-: "${TERMUX_REPO__ROOTFS:="/data/data/com.termux/files"}"
-: "${TERMUX_REPO__HOME:="/data/data/com.termux/files/home"}"
-: "${TERMUX_REPO__PREFIX:="/data/data/com.termux/files/usr"}"
+: "${TERMUX_REPO_APP__PACKAGE_NAME:="$TERMUX_APP__PACKAGE_NAME"}"
+: "${TERMUX_REPO_APP__DATA_DIR:="$TERMUX_APP__DATA_DIR"}"
+: "${TERMUX_REPO__CORE_DIR:="$TERMUX__CORE_DIR"}"
+: "${TERMUX_REPO__APPS_DIR:="$TERMUX__APPS_DIR"}"
+: "${TERMUX_REPO__ROOTFS:="$TERMUX__ROOTFS"}"
+: "${TERMUX_REPO__HOME:="$TERMUX__HOME"}"
+: "${TERMUX_REPO__PREFIX:="$TERMUX__PREFIX"}"
 
 
 
@@ -2246,7 +2246,7 @@ else
     # Default fallback (opt-out) for CI forks: when a custom repo URL is missing a dependency
     # (e.g. circular dependency resolution installing older package), automatically fall back
     # to official Termux repos.
-    : "${TERMUX_USE_OFFICIAL_REPO_FALLBACK:=true}"
+    : "${TERMUX_USE_OFFICIAL_REPO_FALLBACK:=false}"
     if [[ "${TERMUX_USE_OFFICIAL_REPO_FALLBACK}" == "true" ]]; then
         __repo_pkg_format=$(jq --raw-output '.pkg_format // "debian"' "$TERMUX_PKGS__BUILD__REPO_ROOT_DIR/repo.json")
         if [[ "$__repo_pkg_format" == "debian" ]]; then

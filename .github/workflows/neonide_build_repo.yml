@@ -120,10 +120,9 @@ jobs:
           TERMUX_ALLOW_UNVERIFIED_REPOS: "true"
           # Allow matching when only Debian revision differs (e.g. repo has 4.2.2 but dep expects 4.2.2-1)
           TERMUX_ALLOW_REVISION_MISMATCH: "true"
-          # Add official Termux main repo as fallback for dependency downloads
-          TERMUX_EXTRA_REPO_URL: "https://packages-cf.termux.dev/apt/termux-main"
-          TERMUX_EXTRA_REPO_DISTRIBUTION: "stable"
-          TERMUX_EXTRA_REPO_COMPONENT: "main"
+          # Do not use official Termux repo fallback for dependency downloads.
+          # It contains packages built for a different TERMUX_PREFIX (com.termux) which can break NeonIDE builds.
+          TERMUX_USE_OFFICIAL_REPO_FALLBACK: "false"
           # Optional signing
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}

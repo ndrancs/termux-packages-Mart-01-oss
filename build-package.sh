@@ -604,9 +604,13 @@ done
 unset -f _show_usage
 
 # Dependencies should be used from repo only if they are built for
-# same package name.
+# same runtime paths as the current build environment.
 if [ "$TERMUX_REPO_APP__PACKAGE_NAME" != "$TERMUX_APP_PACKAGE" ]; then
 	echo "Ignoring -i option to download dependencies since repo package name ($TERMUX_REPO_APP__PACKAGE_NAME) does not equal app package name ($TERMUX_APP_PACKAGE)"
+	TERMUX_INSTALL_DEPS=false
+fi
+if [ "${TERMUX_REPO__PREFIX:-}" != "${TERMUX_PREFIX:-}" ]; then
+	echo "Ignoring -i option to download dependencies since repo prefix (${TERMUX_REPO__PREFIX:-<unset>}) does not equal build prefix (${TERMUX_PREFIX:-<unset>})"
 	TERMUX_INSTALL_DEPS=false
 fi
 
