@@ -36,6 +36,15 @@ on:
         required: false
         type: boolean
         default: false
+      expected_packages:
+        description: "Optional: space/newline-separated list of package names expected to be published (others will be skipped)."
+        required: false
+        default: ""
+      fail_on_recipe_mismatch:
+        description: "Fail if recipe metadata (maintainer/homepage) mismatches deb control fields."
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -120,6 +129,8 @@ jobs:
           APT_COMPONENT: ${{ inputs.apt_component }}
           APT_ARCH: ${{ inputs.apt_arch }}
           FORCE_OVERWRITE: ${{ inputs.force_overwrite && 'true' || 'false' }}
+          EXPECTED_PACKAGES: ${{ inputs.expected_packages }}
+          FAIL_ON_RECIPE_MISMATCH: ${{ inputs.fail_on_recipe_mismatch && 'true' || 'false' }}
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
         run: |

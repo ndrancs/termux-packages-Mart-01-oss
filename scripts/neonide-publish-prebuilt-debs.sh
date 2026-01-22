@@ -35,6 +35,10 @@ fi
 : "${APT_ARCH:=aarch64}"
 : "${FORCE_OVERWRITE:=false}"
 
+# Optional validation/selection
+: "${EXPECTED_PACKAGES:=}"           # space/newline separated list of package names expected
+: "${FAIL_ON_RECIPE_MISMATCH:=false}" # if true, abort when metadata mismatches are found
+
 if [[ ! -d "$PAGES_REPO_DIR/.git" ]]; then
   echo "ERROR: PAGES_REPO_DIR is not a git repo: $PAGES_REPO_DIR" >&2
   exit 1
@@ -61,6 +65,55 @@ get_pkg_name_from_deb() {
   fi
 }
 
+normalize_ws_list() {
+  tr ' \t\r\n' '\n' | sed '/^$/d' | sort -u
+}
+
+EXPECTED_PACKAGES_NL=""
+if [[ -n "$EXPECTED_PACKAGES" ]]; then
+  EXPECTED_PACKAGES_NL="$(normalize_ws_list <<<"$EXPECTED_PACKAGES")"
+  echo "[*] EXPECTED_PACKAGES set:"
+  echo "$EXPECTED_PACKAGES_NL" | sed 's/^/  - /'
+fi
+
+expected_set_contains() {
+  local name="$1"
+  [[ -z "$EXPECTED_PACKAGES_NL" ]] && return 0
+  grep -qx -- "$name" <<<"$EXPECTED_PACKAGES_NL"
+}
+
+# Extract a few key fields from a recipe build.sh by sourcing it.
+# NOTE: Build scripts are trusted code in this repo. We only read variables.
+recipe_field() {
+  local pkg="$1" field="$2"
+  local script=""
+  for d in packages x11-packages root-packages disabled-packages; do
+    if [[ -f "$PWD/$d/$pkg/build.sh" ]]; then
+      script="$PWD/$d/$pkg/build.sh"
+      break
+    fi
+  done
+  [[ -z "$script" ]] && return 0
+
+  # shellcheck disable=SC1090
+  ( source "$script";
+    case "$field" in
+      homepage) echo "${TERMUX_PKG_HOMEPAGE:-}";;
+      description) echo "${TERMUX_PKG_DESCRIPTION:-}";;
+      maintainer) echo "${TERMUX_PKG_MAINTAINER:-}";;
+      depends) echo "${TERMUX_PKG_DEPENDS:-}";;
+      recommends) echo "${TERMUX_PKG_RECOMMENDS:-}";;
+      *) echo "";;
+    esac
+  )
+}
+
+deb_field() {
+  local deb="$1" field="$2"
+  dpkg-deb -f "$deb" "$field" 2>/dev/null || true
+}
+
+mismatch=0
 copied=0
 shopt -s nullglob
 for deb in "$DEBS_DIR"/*.deb; do
@@ -75,6 +128,38 @@ for deb in "$DEBS_DIR"/*.deb; do
     continue
   fi
 
+  if ! expected_set_contains "$pkg"; then
+    echo "[=] Skipping $pkg (not in EXPECTED_PACKAGES)"
+    continue
+  fi
+
+  # Validate deb control metadata vs recipe metadata (best-effort).
+  recipe_homepage="$(recipe_field "$pkg" homepage)"
+  recipe_maint="$(recipe_field "$pkg" maintainer)"
+  recipe_depends="$(recipe_field "$pkg" depends)"
+  recipe_recommends="$(recipe_field "$pkg" recommends)"
+
+  deb_maint="$(deb_field "$deb" Maintainer)"
+  deb_homepage="$(deb_field "$deb" Homepage)"
+  deb_depends="$(deb_field "$deb" Depends)"
+  deb_recommends="$(deb_field "$deb" Recommends)"
+
+  if [[ -n "$recipe_maint" && -n "$deb_maint" && "$deb_maint" != *"$recipe_maint"* ]]; then
+    echo "[!] MISMATCH $pkg: Maintainer\n    recipe: $recipe_maint\n    deb:    $deb_maint" >&2
+    mismatch=1
+  fi
+  if [[ -n "$recipe_homepage" && -n "$deb_homepage" && "$deb_homepage" != "$recipe_homepage" ]]; then
+    echo "[!] MISMATCH $pkg: Homepage\n    recipe: $recipe_homepage\n    deb:    $deb_homepage" >&2
+    mismatch=1
+  fi
+  # Loose checks for depends/recommends because formats differ between recipe and control.
+  if [[ -n "$recipe_depends" && -n "$deb_depends" ]]; then
+    : # (informational only)
+  fi
+  if [[ -n "$recipe_recommends" && -n "$deb_recommends" ]]; then
+    : # (informational only)
+  fi
+
   group="$(pool_group_for_pkg "$pkg")"
   dest_dir="$PAGES_REPO_DIR/pool/${APT_COMPONENT}/$group/$pkg"
   mkdir -p "$dest_dir"
@@ -82,7 +167,6 @@ for deb in "$DEBS_DIR"/*.deb; do
   dest_path="$dest_dir/$(basename "$deb")"
 
   if [[ -f "$dest_path" && "$FORCE_OVERWRITE" != "true" ]]; then
-    # If same checksum, skip; otherwise overwrite.
     src_sha="$(sha256sum "$deb" | awk '{print $1}')"
     dst_sha="$(sha256sum "$dest_path" | awk '{print $1}')"
     if [[ "$src_sha" == "$dst_sha" ]]; then
@@ -97,6 +181,11 @@ for deb in "$DEBS_DIR"/*.deb; do
 
 done
 shopt -u nullglob
+
+if [[ "$FAIL_ON_RECIPE_MISMATCH" == "true" && $mismatch -ne 0 ]]; then
+  echo "ERROR: Recipe/deb metadata mismatches detected and FAIL_ON_RECIPE_MISMATCH=true" >&2
+  exit 1
+fi
 
 if [[ $copied -ne 1 ]]; then
   echo "WARN: No .deb files were published from $DEBS_DIR" >&2
