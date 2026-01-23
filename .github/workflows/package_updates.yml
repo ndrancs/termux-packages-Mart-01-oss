@@ -1,14 +1,14 @@
 name: Package updates
 
 on:
-  push:
-    branches:
-    - '**'
-    - '!master'
-    paths:
-    - 'packages/**'
-    - 'root-packages/**'
-    - 'x11-packages/**'
+  #push:
+    #branches:
+    #- '**'
+    #- '!master'
+    #paths:
+    #- 'packages/**'
+    #- 'root-packages/**'
+    #- 'x11-packages/**'
   pull_request:
     paths:
     - 'packages/**'
