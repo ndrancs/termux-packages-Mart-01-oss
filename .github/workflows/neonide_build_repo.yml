@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       batch_size:
-        description: "Max number of source packages to build per run (keeps workflow under GitHub limits)"
+        description: "Max number of source packages to build per run (total across all shards)"
         required: false
         default: "25"
+      shard_count:
+        description: "Number of parallel shards (jobs) to build in parallel"
+        required: false
+        default: "4"
       force_rebuild:
-        description: "Rebuild even if .deb exists and SHA256 matches current Packages"
+        description: "Rebuild even if package already exists in current Packages index"
         required: false
         type: boolean
         default: false
@@ -20,18 +24,203 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-publish:
+  plan:
+    name: Plan shards
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - id: set-matrix
+        name: Build matrix JSON
+        run: |
+          set -euo pipefail
+
+          SHARDS='${{ inputs.shard_count }}'
+          if ! [[ "$SHARDS" =~ ^[0-9]+$ ]]; then
+            echo "::error ::shard_count must be an integer, got: '$SHARDS'"
+            exit 1
+          fi
+          if [ "$SHARDS" -lt 1 ] || [ "$SHARDS" -gt 16 ]; then
+            echo "::error ::shard_count must be within 1..16, got: '$SHARDS'"
+            exit 1
+          fi
+
+          json='{"include":['
+          for ((i=0;i<SHARDS;i++)); do
+            if [ "$i" -gt 0 ]; then json+=','; fi
+            json+="{\"shard\":$i}"
+          done
+          json+=']}'
+
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build debs (shard ${{ matrix.shard }})
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+      - name: Checkout termux-packages
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Prepare TERMUX_TOPDIR mount on runner
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/termux-topdir
+          sudo chown -R "$USER:$USER" /mnt/termux-topdir
+
+      # Cache only the high-value Termux build caches (NOT full build dirs).
+      # This reduces repeated downloads (tarballs, etc.) across workflow runs.
+      - name: Cache Termux build caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            /mnt/termux-topdir/_cache
+            /mnt/termux-topdir/.built-packages
+            /mnt/termux-topdir/python*-crossenv-prefix-*
+          key: neonide-termux-topdir-aarch64-v1-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            neonide-termux-topdir-aarch64-v1-${{ github.ref_name }}-
+            neonide-termux-topdir-aarch64-v1-
+
+      - name: Fetch current published Packages index (sparse shallow clone)
+        run: |
+          set -euo pipefail
+          rm -rf pages-repo
+
+          # Public clone for read-only (avoid needing PAT here).
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/Mart-01-oss/pages.git pages-repo
+          (
+            cd pages-repo
+            git sparse-checkout set dists/stable/main/binary-aarch64/Packages
+          )
+
+      - id: select
+        name: Select packages for this shard
+        run: |
+          set -euo pipefail
+
+          SHARDS='${{ inputs.shard_count }}'
+          SHARD='${{ matrix.shard }}'
+          BATCH_SIZE='${{ inputs.batch_size }}'
+          FORCE_REBUILD='${{ inputs.force_rebuild && 'true' || 'false' }}'
+
+          if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
+            echo "::error ::batch_size must be a positive integer, got: '$BATCH_SIZE'"
+            exit 1
+          fi
+
+          PAGES_PACKAGES="pages-repo/dists/stable/main/binary-aarch64/Packages"
+
+          # Load exclude list (bootstrap/core packages) into a set
+          declare -A EXCLUDE=()
+          if [ -f "scripts/neonide-bootstrap-packages.txt" ]; then
+            while IFS= read -r p; do
+              [ -z "$p" ] && continue
+              EXCLUDE["$p"]=1
+            done < <(tr ' ' '\n' < scripts/neonide-bootstrap-packages.txt | sed '/^$/d')
+          fi
+
+          # Load already-published binary packages into a set (best-effort).
+          # We treat presence in Packages as "already built" and skip unless FORCE_REBUILD=true.
+          declare -A PUBLISHED=()
+          if [ "$FORCE_REBUILD" != "true" ] && [ -f "$PAGES_PACKAGES" ]; then
+            while IFS= read -r p; do
+              [ -z "$p" ] && continue
+              PUBLISHED["$p"]=1
+            done < <(grep -E '^Package: ' "$PAGES_PACKAGES" | sed -E 's/^Package: //' | sort -u)
+          fi
+
+          # Enumerate source recipes (top-level ./packages/<name>)
+          mapfile -t ALL_RECIPES < <(find packages -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u)
+
+          # Priority packages first.
+          PRIORITY=(jsoncpp)
+          declare -A IS_PRIORITY=()
+          for p in "${PRIORITY[@]}"; do IS_PRIORITY["$p"]=1; done
+
+          selected_all=()
+          add_if_needed() {
+            local pkg="$1"
+            [ -z "$pkg" ] && return 0
+            [ -n "${EXCLUDE[$pkg]:-}" ] && return 0
+            if [ "$FORCE_REBUILD" != "true" ] && [ -n "${PUBLISHED[$pkg]:-}" ]; then
+              return 0
+            fi
+            selected_all+=("$pkg")
+          }
+
+          # Add priority packages (if they exist as recipes)
+          declare -A HAS_RECIPE=()
+          for p in "${ALL_RECIPES[@]}"; do HAS_RECIPE["$p"]=1; done
+          for p in "${PRIORITY[@]}"; do
+            if [ -n "${HAS_RECIPE[$p]:-}" ]; then
+              add_if_needed "$p"
+            fi
+          done
+
+          # Then add the rest in sorted order
+          for p in "${ALL_RECIPES[@]}"; do
+            [ -n "${IS_PRIORITY[$p]:-}" ] && continue
+            add_if_needed "$p"
+          done
+
+          # Apply BATCH_SIZE across all shards (truncate before sharding)
+          if [ "${#selected_all[@]}" -gt "$BATCH_SIZE" ]; then
+            selected_all=("${selected_all[@]:0:$BATCH_SIZE}")
+          fi
+
+          # Shard distribution (round-robin)
+          out="shard-packages.txt"
+          : > "$out"
+          idx=0
+          for p in "${selected_all[@]}"; do
+            if (( idx % SHARDS == SHARD )); then
+              echo "$p" >> "$out"
+            fi
+            ((idx++))
+          done
+
+          count="$(wc -l < "$out" | tr -d ' ')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          if [ "$count" -eq 0 ]; then
+            echo "No packages selected for shard $SHARD/$SHARDS."
+            echo "has_packages=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Selected $count package(s) for shard $SHARD/$SHARDS (batch_size=$BATCH_SIZE, force_rebuild=$FORCE_REBUILD):"
+            sed -n '1,200p' "$out"
+            echo "has_packages=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare per-shard artifact directory (always)
+        run: |
+          set -euo pipefail
+          mkdir -p prebuilt-debs
+          : > prebuilt-debs/.keep
+
+      # From here on, do the heavy CI setup only if we actually need to build.
       - name: Disk space (before)
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
         run: |
           set -euo pipefail
           df -h
 
-      # Reuse approach from neonide_bootstrap.yml
       - name: Free disk space (lightweight)
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
         run: |
           set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
@@ -40,6 +229,7 @@ jobs:
           df -h
 
       - name: Move Docker data-root to /mnt/docker
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
         run: |
           set -euo pipefail
           DOCKER_ROOT="/mnt/docker"
@@ -53,12 +243,96 @@ jobs:
           docker info | sed -n '1,120p'
           df -h
 
+      - id: llvm
+        name: Detect LLVM base dir inside docker builder
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
+        env:
+          TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
+        run: |
+          set -euo pipefail
+          HOST_LLVM_BASE_DIR_IN_CONTAINER="$(./scripts/run-docker.sh bash -lc '
+            set -e
+            best=""
+            for d in /usr/lib/llvm-*; do
+              if [ -x "$d/bin/clang" ]; then best="$d"; fi
+            done
+            if [ -n "$best" ]; then echo "$best"; else echo "/usr"; fi
+          ' | tail -n 1)"
+          echo "HOST_LLVM_BASE_DIR_IN_CONTAINER=$HOST_LLVM_BASE_DIR_IN_CONTAINER" >> "$GITHUB_OUTPUT"
+          echo "Using LLVM base dir: $HOST_LLVM_BASE_DIR_IN_CONTAINER"
+
+      - name: Ensure Android SDK/NDK available in docker
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
+        env:
+          TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
+        run: |
+          set -euo pipefail
+          ./scripts/run-docker.sh bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi'
+
+      - name: Build packages for this shard
+        if: ${{ steps.select.outputs.has_packages == 'true' }}
+        env:
+          TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
+          HOST_LLVM_BASE_DIR_IN_CONTAINER: ${{ steps.llvm.outputs.HOST_LLVM_BASE_DIR_IN_CONTAINER }}
+        run: |
+          set -euo pipefail
+
+          while IFS= read -r pkg; do
+            [ -z "$pkg" ] && continue
+            echo "============================================================"
+            echo "[*] Building $pkg (shard ${{ matrix.shard }})"
+            echo "============================================================"
+
+            mkdir -p output
+            rm -f output/*.deb || true
+
+            ./scripts/run-docker.sh env \
+              TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" \
+              BUILD_CC="$HOST_LLVM_BASE_DIR_IN_CONTAINER/bin/clang" \
+              TERMUX_REPO_APP__PACKAGE_NAME="com.neonide.studio" \
+              TERMUX_ALLOW_UNVERIFIED_REPOS="true" \
+              TERMUX_ALLOW_REVISION_MISMATCH="true" \
+              TERMUX_USE_OFFICIAL_REPO_FALLBACK="false" \
+              ./build-package.sh -i -a aarch64 "$pkg"
+
+            shopt -s nullglob
+            for deb in output/*.deb; do
+              cp -f "$deb" prebuilt-debs/
+            done
+            shopt -u nullglob
+          done < shard-packages.txt
+
+          echo "[*] Produced debs:";
+          ls -lah prebuilt-debs || true
+
+      - name: Upload built .deb artifacts (per shard)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-debs-shard-${{ matrix.shard }}
+          path: prebuilt-debs
+          if-no-files-found: error
+
+      - name: Docker cleanup (always)
+        if: ${{ always() && steps.select.outputs.has_packages == 'true' }}
+        run: |
+          set -euo pipefail
+          docker system prune -af --volumes || true
+          df -h
+
+  publish:
+    name: Publish combined debs to pages repo
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
       - name: Checkout termux-packages
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - name: Install host tools for repo generation
+      - name: Install host tools
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -74,16 +348,11 @@ jobs:
             echo "No signing key configured (NEONIDE_GPG_PRIVATE_KEY_B64/NEONIDE_GPG_KEY_ID missing). Repo will be unsigned."
             exit 0
           fi
-
-          # Import private key (base64 encoded ASCII-armored export)
           echo "$NEONIDE_GPG_PRIVATE_KEY_B64" | base64 -d | gpg --batch --import
-
-          # IMPORTANT: Do not use 'gpg --edit-key' here (it becomes interactive on newer gpg).
-          # Trust is not required for signing with an available secret key.
           echo "Secret key is available."
           gpg --batch --list-secret-keys --keyid-format=long "$NEONIDE_GPG_KEY_ID" | sed -n '1,120p'
 
-      - name: Checkout pages repo
+      - name: Checkout pages repo (shallow)
         env:
           PAGES_PAT: ${{ secrets.PAGES_PAT }}
         run: |
@@ -93,46 +362,51 @@ jobs:
             exit 1
           fi
           rm -rf pages-repo
-          git clone "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
+          git clone --depth 1 "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
 
-      - name: Ensure Android SDK/NDK available in docker
-        env:
-          TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
+      - name: Download all shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: prebuilt-debs-shard-*
+          path: prebuilt-debs
+          merge-multiple: true
+
+      - id: debs
+        name: Find debs to publish
         run: |
           set -euo pipefail
-          sudo mkdir -p /mnt/termux-topdir
-          sudo chown -R "$USER:$USER" /mnt/termux-topdir
-          ./scripts/run-docker.sh bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi'
+          find prebuilt-debs -type f ! -name '*.deb' -delete || true
 
-      - name: Build missing packages & update repo metadata
+          count="$(find prebuilt-debs -maxdepth 2 -type f -name '*.deb' | wc -l | tr -d ' ')"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+          if [ "$count" -eq 0 ]; then
+            echo "[*] No .deb files produced by build shards; skipping publish."
+            echo "has_debs=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "[*] Debs to publish ($count):"
+          find prebuilt-debs -maxdepth 2 -type f -name '*.deb' -print
+          echo "has_debs=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish debs into pages APT repo
+        if: ${{ steps.debs.outputs.has_debs == 'true' }}
         env:
           PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
-          TERMUX_ARCH: aarch64
-          BATCH_SIZE: ${{ inputs.batch_size }}
-          FORCE_REBUILD: ${{ inputs.force_rebuild && 'true' || 'false' }}
-          # Use runner disk (/mnt) for TERMUX_TOPDIR inside container to avoid docker overlay disk exhaustion
-          TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
-          # Exclude "termux core" (bootstrap) packages list
-          EXCLUDE_BOOTSTRAP_LIST: ${{ github.workspace }}/scripts/neonide-bootstrap-packages.txt
-          # Desired list: build all package recipes (incremental batches)
-          DESIRED_PACKAGES_SOURCE: recipes
-          # Allow using unsigned repo metadata for custom pages repo (fallback official repo still verified)
-          TERMUX_ALLOW_UNVERIFIED_REPOS: "true"
-          # Allow matching when only Debian revision differs (e.g. repo has 4.2.2 but dep expects 4.2.2-1)
-          TERMUX_ALLOW_REVISION_MISMATCH: "true"
-          # Do not use official Termux repo fallback for dependency downloads.
-          # It contains packages built for a different TERMUX_PREFIX (com.termux) which can break NeonIDE builds.
-          TERMUX_USE_OFFICIAL_REPO_FALLBACK: "false"
-          # Optional signing
+          DEBS_DIR: ${{ github.workspace }}/prebuilt-debs
+          APT_DIST: stable
+          APT_COMPONENT: main
+          APT_ARCH: aarch64
+          FORCE_OVERWRITE: "false"
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
-          sudo mkdir -p /mnt/termux-topdir
-          sudo chown -R "$USER:$USER" /mnt/termux-topdir
-          ./scripts/neonide-build-and-publish-pages.sh
+          bash ./scripts/neonide-publish-prebuilt-debs.sh
 
       - name: Commit & push pages repo changes (if any)
+        if: ${{ steps.debs.outputs.has_debs == 'true' }}
         env:
           PAGES_PAT: ${{ secrets.PAGES_PAT }}
         run: |
@@ -145,12 +419,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Update aarch64 repo (batch build)"
+          git commit -m "Update aarch64 repo (parallel batch build)"
           git push origin main
-
-      - name: Docker cleanup (always)
-        if: always()
-        run: |
-          set -euo pipefail
-          docker system prune -af --volumes || true
-          df -h
