@@ -30,6 +30,13 @@ termux_step_post_configure() {
 		EOF
 	fi
 
+	# splitmix >=0.1.2 uses getentropy(3) in C bits. On Android this is only
+	# available starting API 28, while Termux builds target API 24 by default.
+	# Pin to splitmix-0.1.1 which uses /dev/urandom/gettimeofday instead.
+	cat <<-EOF >>cabal.project.local
+		constraints: splitmix==0.1.1
+	EOF
+
 	if [[ "$TERMUX_ARCH" == "arm" ]]; then
 		cat <<-EOF >>cabal.project.local
 			package atomic-counter

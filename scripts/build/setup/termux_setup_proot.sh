@@ -35,6 +35,22 @@ termux_setup_proot() {
 		TERMUX_PROOT_QEMU="-q $TERMUX_PROOT_BIN/qemu-$TERMUX_ARCH"
 	fi
 
+	# Bind a minimal Android filesystem layout for qemu/proot.
+	#
+	# Some cross build tools (notably GHC's external interpreter ghc-iserv) may
+	# execute target binaries during compilation. qemu-user expects the Android
+	# dynamic linker at /system/bin/linker{,64}.
+	#
+	# aosp-libs installs a bionic runtime under $TERMUX_PREFIX/opt/aosp, so bind
+	# that directory to /system inside proot.
+	local _proot_binds=""
+	if [[ -d "$TERMUX_PREFIX/opt/aosp" ]]; then
+		_proot_binds+=" -b $TERMUX_PREFIX/opt/aosp:/system"
+	fi
+	# Provide an empty /data to satisfy ANDROID_DATA.
+	mkdir -p "$TERMUX_PROOT_BIN/proot-data"
+	_proot_binds+=" -b $TERMUX_PROOT_BIN/proot-data:/data"
+
 	# NOTE: We include current PATH too so that host binaries also become available under proot.
 	cat <<-EOF >"$TERMUX_PROOT_BIN/$TERMUX_PROOT_BIN_NAME"
 		#!/bin/bash
@@ -48,7 +64,7 @@ termux_setup_proot() {
 			TERM=$TERM \
 			TZ=UTC \
 			$TERMUX_PROOT_EXTRA_ENV_VARS \
-			$TERMUX_PROOT_BIN/proot $TERMUX_PROOT_QEMU -R / "\$@"
+			$TERMUX_PROOT_BIN/proot $TERMUX_PROOT_QEMU $_proot_binds -R / "\$@"
 	EOF
 	chmod +x "$TERMUX_PROOT_BIN/$TERMUX_PROOT_BIN_NAME"
 }
