@@ -76,15 +76,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Ensure artifact directory always exists, even if an early step fails.
-      - name: Prepare per-shard artifact directory (always)
+      # Prepare output directories.
+      # We intentionally do NOT create placeholder files: if a shard produces no .debs,
+      # we skip uploading the deb artifact (but still upload logs).
+      - name: Prepare shard output directories
         run: |
           set -euo pipefail
-          mkdir -p prebuilt-debs
-          # upload-artifact ignores hidden files by default, so keep a non-hidden placeholder
-          # to avoid "No files were found" when a shard does not build any debs.
-          : > prebuilt-debs/.placeholder
-          : > prebuilt-debs/EMPTY
+          mkdir -p prebuilt-debs logs
 
       - name: Prepare TERMUX_TOPDIR mount on runner
         run: |
@@ -283,6 +281,8 @@ jobs:
         run: |
           set -euo pipefail
 
+          shard_failed=0
+
           while IFS= read -r pkg; do
             [ -z "$pkg" ] && continue
             echo "============================================================"
@@ -292,6 +292,13 @@ jobs:
             mkdir -p output
             rm -f output/*.deb || true
 
+            log_path="logs/${pkg}-shard-${{ matrix.shard }}.log"
+            : > "$log_path"
+
+            # First try with -i (download deps from NeonIDE repo). If a dependency is missing
+            # from the repo (common on fresh repos / after partial publishes), retry without -i
+            # so dependencies can be built from source instead of downloaded.
+            set +e
             ./scripts/run-docker.sh env \
               TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" \
               BUILD_CC="$HOST_LLVM_BASE_DIR_IN_CONTAINER/bin/clang" \
@@ -299,7 +306,28 @@ jobs:
               TERMUX_ALLOW_UNVERIFIED_REPOS="true" \
               TERMUX_ALLOW_REVISION_MISMATCH="true" \
               TERMUX_USE_OFFICIAL_REPO_FALLBACK="false" \
-              ./build-package.sh -i -a aarch64 "$pkg"
+              ./build-package.sh -i -a aarch64 "$pkg" >>"$log_path" 2>&1
+            rc=$?
+
+            if [ $rc -ne 0 ]; then
+              echo "[!] Build with -i failed for $pkg (rc=$rc). Retrying without -i..." | tee -a "$log_path" >&2
+              ./scripts/run-docker.sh env \
+                TERMUX_HOST_LLVM_BASE_DIR="$HOST_LLVM_BASE_DIR_IN_CONTAINER" \
+                BUILD_CC="$HOST_LLVM_BASE_DIR_IN_CONTAINER/bin/clang" \
+                TERMUX_REPO_APP__PACKAGE_NAME="com.neonide.studio" \
+                TERMUX_ALLOW_UNVERIFIED_REPOS="true" \
+                TERMUX_ALLOW_REVISION_MISMATCH="true" \
+                TERMUX_USE_OFFICIAL_REPO_FALLBACK="false" \
+                ./build-package.sh -a aarch64 "$pkg" >>"$log_path" 2>&1
+              rc=$?
+            fi
+            set -e
+
+            if [ $rc -ne 0 ]; then
+              echo "[!] FAILED: $pkg (rc=$rc)" | tee -a "$log_path" >&2
+              shard_failed=1
+              continue
+            fi
 
             shopt -s nullglob
             for deb in output/*.deb; do
@@ -315,13 +343,27 @@ jobs:
           echo "[*] Produced debs:";
           ls -lah prebuilt-debs || true
 
+          # propagate shard failure after trying all packages
+          if [ "$shard_failed" -ne 0 ]; then
+            echo "::error ::One or more packages failed on shard ${{ matrix.shard }} (see logs artifact)."
+            exit 1
+          fi
+
       - name: Upload built .deb artifacts (per shard)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: prebuilt-debs-shard-${{ matrix.shard }}
-          path: prebuilt-debs
-          if-no-files-found: error
+          path: prebuilt-debs/*.deb
+          if-no-files-found: ignore
+
+      - name: Upload build logs (per shard)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-shard-${{ matrix.shard }}
+          path: logs
+          if-no-files-found: warn
 
       - name: Docker cleanup (always)
         if: ${{ always() && steps.select.outputs.has_packages == 'true' }}
@@ -377,12 +419,20 @@ jobs:
           rm -rf pages-repo
           git clone --depth 1 "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
 
-      - name: Download all shard artifacts
+      - name: Download all shard deb artifacts
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           pattern: prebuilt-debs-shard-*
           path: prebuilt-debs
+          merge-multiple: true
+
+      - name: Download all shard build logs (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build-logs-shard-*
+          path: build-logs
           merge-multiple: true
 
       - id: debs
