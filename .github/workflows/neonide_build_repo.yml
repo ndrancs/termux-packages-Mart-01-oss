@@ -51,7 +51,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `inputs.*` is only populated for workflow_dispatch. For push builds it is
+          # an empty string, so provide the workflow_dispatch default here too.
           SHARDS='${{ inputs.shard_count }}'
+          if [ -z "$SHARDS" ]; then
+            SHARDS=16
+          fi
           if ! [[ "$SHARDS" =~ ^[0-9]+$ ]]; then
             echo "::error ::shard_count must be an integer, got: '$SHARDS'"
             exit 1
@@ -133,10 +138,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # `inputs.*` is only populated for workflow_dispatch. For push builds it is
+          # an empty string, so fall back to the workflow_dispatch defaults.
           SHARDS='${{ inputs.shard_count }}'
           SHARD='${{ matrix.shard }}'
           BATCH_SIZE='${{ inputs.batch_size }}'
           FORCE_REBUILD='${{ inputs.force_rebuild && 'true' || 'false' }}'
+
+          [ -z "$SHARDS" ] && SHARDS=16
+          [ -z "$BATCH_SIZE" ] && BATCH_SIZE=80
 
           if ! [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] || [ "$BATCH_SIZE" -lt 1 ]; then
             echo "::error ::batch_size must be a positive integer, got: '$BATCH_SIZE'"
