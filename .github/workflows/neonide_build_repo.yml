@@ -273,7 +273,8 @@ jobs:
           set -euo pipefail
           ./scripts/run-docker.sh bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi'
 
-      - name: Build packages for this shard
+      - id: build_shard
+        name: Build packages for this shard
         if: ${{ steps.select.outputs.has_packages == 'true' }}
         env:
           TERMUX_DOCKER__HOST_TERMUX_TOPDIR: /mnt/termux-topdir
@@ -282,6 +283,7 @@ jobs:
           set -euo pipefail
 
           shard_failed=0
+          : > logs/FAILED_PACKAGES.txt
 
           while IFS= read -r pkg; do
             [ -z "$pkg" ] && continue
@@ -325,9 +327,13 @@ jobs:
 
             if [ $rc -ne 0 ]; then
               echo "[!] FAILED: $pkg (rc=$rc)" | tee -a "$log_path" >&2
+              echo "$pkg" >> logs/FAILED_PACKAGES.txt
               shard_failed=1
               continue
             fi
+
+            # Build succeeded: remove log to keep artifacts small.
+            rm -f "$log_path" || true
 
             shopt -s nullglob
             for deb in output/*.deb; do
@@ -340,12 +346,14 @@ jobs:
             shopt -u nullglob
           done < shard-packages.txt
 
+          # Expose shard_failed to later steps (even if we exit non-zero).
+          echo "shard_failed=$shard_failed" >> "$GITHUB_OUTPUT"
+
           echo "[*] Produced debs:";
           ls -lah prebuilt-debs || true
 
-          # propagate shard failure after trying all packages
           if [ "$shard_failed" -ne 0 ]; then
-            echo "::error ::One or more packages failed on shard ${{ matrix.shard }} (see logs artifact)."
+            echo "::error ::One or more packages failed on shard ${{ matrix.shard }} (see FAILED_PACKAGES.txt + logs artifact)."
             exit 1
           fi
 
@@ -357,8 +365,8 @@ jobs:
           path: prebuilt-debs/*.deb
           if-no-files-found: ignore
 
-      - name: Upload build logs (per shard)
-        if: always()
+      - name: Upload build logs (per shard, failures only)
+        if: ${{ always() && steps.select.outputs.has_packages == 'true' && steps.build_shard.outputs.shard_failed == '1' }}
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-shard-${{ matrix.shard }}
