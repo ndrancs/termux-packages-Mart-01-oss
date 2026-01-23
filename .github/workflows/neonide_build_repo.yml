@@ -329,6 +329,9 @@ jobs:
   publish:
     name: Publish combined debs to pages repo
     needs: build
+    # Always run publish after the matrix completes, even if some shards failed.
+    # This allows publishing whatever debs were successfully built.
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -371,6 +374,7 @@ jobs:
           git clone --depth 1 "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
 
       - name: Download all shard artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           pattern: prebuilt-debs-shard-*
@@ -381,6 +385,7 @@ jobs:
         name: Find debs to publish
         run: |
           set -euo pipefail
+          mkdir -p prebuilt-debs
           find prebuilt-debs -type f ! -name '*.deb' -delete || true
 
           count="$(find prebuilt-debs -maxdepth 2 -type f -name '*.deb' | wc -l | tr -d ' ')"
