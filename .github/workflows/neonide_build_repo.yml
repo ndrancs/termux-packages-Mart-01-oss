@@ -6,11 +6,11 @@ on:
       batch_size:
         description: "Max number of source packages to build per run (total across all shards)"
         required: false
-        default: "25"
+        default: "80"
       shard_count:
         description: "Number of parallel shards (jobs) to build in parallel"
         required: false
-        default: "4"
+        default: "16"
       force_rebuild:
         description: "Rebuild even if package already exists in current Packages index"
         required: false
