@@ -8,8 +8,8 @@ termux_setup_ghc_iserv() {
 
 	export PATH="$TERMUX_ISERV_BIN:$PATH"
 
-	[[ -d "$TERMUX_ISERV_BIN" ]] && return
-
+	# Even if the cache dir exists from a previous run, (re)generate the wrapper
+	# scripts since their behavior can change over time (notably proot/qemu env).
 	mkdir -p "$TERMUX_ISERV_BIN"
 
 	local ghc_bin_dir

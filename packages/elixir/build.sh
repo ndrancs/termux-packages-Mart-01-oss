@@ -4,7 +4,14 @@ TERMUX_PKG_LICENSE="Apache-2.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="1.18.4"
 _ERLANG_MAJOR_VERSION=$(. "$TERMUX_SCRIPTDIR"/packages/erlang/build.sh; echo "${TERMUX_PKG_VERSION%%.*}")
-TERMUX_PKG_SRCURL=https://github.com/elixir-lang/elixir/releases/download/v${TERMUX_PKG_VERSION}/elixir-otp-${_ERLANG_MAJOR_VERSION}.zip
+# Elixir upstream may not publish an otp-<latest> precompiled zip for all releases.
+# For v1.18.4, upstream notes that the otp-27 build is binary compatible with OTP 28.
+# Use otp-27 when building against Erlang/OTP 28 to avoid 404 downloads.
+_ELIXIR_PREBUILT_OTP_MAJOR="${_ERLANG_MAJOR_VERSION}"
+if [ "${_ERLANG_MAJOR_VERSION}" -ge 28 ]; then
+	_ELIXIR_PREBUILT_OTP_MAJOR=27
+fi
+TERMUX_PKG_SRCURL=https://github.com/elixir-lang/elixir/releases/download/v${TERMUX_PKG_VERSION}/elixir-otp-${_ELIXIR_PREBUILT_OTP_MAJOR}.zip
 TERMUX_PKG_SHA256=5be18f35e329f7c5914a80dd9f323d7bbb144616df1ed16f6f0862a1900b4bb5
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="dash, erlang"
