@@ -162,7 +162,12 @@ termux_step_post_get_source() {
 		rm -fr emsdk
 		git clone https://github.com/emscripten-core/emsdk --depth=1
 		cd emsdk
-		./emsdk install latest
+		# Install & activate the same Emscripten version as this package.
+		# Otherwise, the "upstream" entrypoints/binaries list may differ (e.g. new
+		# tools like 'empath-split' appear in newer releases) and our sanity check
+		# in termux_step_post_massage will fail.
+		./emsdk install "${TERMUX_PKG_VERSION}"
+		./emsdk activate "${TERMUX_PKG_VERSION}"
 		echo "$TERMUX_PKG_VERSION" > "${TERMUX_PKG_CACHEDIR}"/emsdk-fetched
 		popd
 	fi

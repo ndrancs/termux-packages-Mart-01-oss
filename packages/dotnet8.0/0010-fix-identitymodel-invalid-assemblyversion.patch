@@ -1,14 +1,15 @@
 --- a/src/source-build-externals/src/azure-activedirectory-identitymodel-extensions-for-dotnet/src/Microsoft.IdentityModel.Abstractions/Microsoft.IdentityModel.Abstractions.csproj
 +++ b/src/source-build-externals/src/azure-activedirectory-identitymodel-extensions-for-dotnet/src/Microsoft.IdentityModel.Abstractions/Microsoft.IdentityModel.Abstractions.csproj
-@@ -1,3 +1,11 @@
-+  <!--
-+    Termux/NeonIDE: .NET source-build-externals sets an AssemblyVersion with a
-+    4th component that can exceed 65535 (e.g. 7.1.2.70124), which fails the C#
-+    compiler (CS7035) when warnings are treated as errors.
-+    Force a valid 4-part version.
-+  -->
+@@ -1,6 +1,11 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+ 
+   <Import Project="..\..\build\common.props" />
+ 
 +  <PropertyGroup>
 +    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
 +    <FileVersion>$(VersionPrefix).0</FileVersion>
 +  </PropertyGroup>
- </Project>
++
+   <PropertyGroup>
+     <AssemblyName>Microsoft.IdentityModel.Abstractions</AssemblyName>
+     <Description>A package containing thin abstractions for Microsoft.IdentityModel.</Description>

@@ -18,6 +18,8 @@ termux_step_configure() {
 	termux_setup_rust
 	export CARGO_BUILD_TARGET=${CARGO_TARGET_NAME}
 	export PYO3_CROSS_LIB_DIR=$TERMUX_PREFIX/lib
+	# maturin/pyo3 needs this to determine the target platform for Android.
+	export ANDROID_API_LEVEL=$TERMUX_PKG_API_LEVEL
 }
 
 termux_step_create_debscripts() {
