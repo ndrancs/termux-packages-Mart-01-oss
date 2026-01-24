@@ -1,7 +1,6 @@
---- a/common/optparser.c
-+++ b/common/optparser.c
-@@ -38,6 +38,14 @@
- #ifdef HAVE_STRINGS_H
+--- a/common/optparser.c	2026-01-24 12:13:40.545763055 +0800
++++ b/common/optparser.c	2026-01-24 12:13:40.617763055 +0800
+@@ -39,6 +39,14 @@
  #include <strings.h>
  #endif
  #include <ctype.h>
@@ -12,8 +11,7 @@
 +#ifndef LLONG_MAX
 +#define LLONG_MAX __LONG_LONG_MAX__
 +#endif
++
  
  // libclamav
  #include "clamav.h"
- #include "regex/regex.h"
- #include "default.h"

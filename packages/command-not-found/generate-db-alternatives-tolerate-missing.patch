@@ -1,0 +1,28 @@
+--- a/generate-db.js	2026-01-24 13:11:14.731879624 +0800
++++ b/generate-db.js	2026-01-24 13:11:14.791879624 +0800
+@@ -221,8 +221,10 @@
+ 
+         const packageName = fileMap.get(join(TERMUX_PREFIX.substring(1), path));
+         if (packageName === undefined) {
+-          console.error(`Package name not found for path: ${path}`);
+-          process.exit(1);
++          console.error(
++            `WARN: Package name not found for path: ${path} (from ${file}); skipping alternative`,
++          );
++          return;
+         }
+         if (!binMap.has(packageName)) {
+           binMap.set(packageName, []);
+@@ -234,6 +236,12 @@
+               join(TERMUX_PREFIX.substring(1), path),
+             );
+             const depBinary = link.substring(link.lastIndexOf("/") + 1);
++            if (depPackageName === undefined) {
++              console.error(
++                `WARN: Package name not found for dependent path: ${path} (from ${file}); skipping dependent`,
++              );
++              return;
++            }
+             if (!binMap.has(depPackageName)) {
+               binMap.set(depPackageName, []);
+             }

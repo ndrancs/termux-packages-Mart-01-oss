@@ -46,12 +46,24 @@ termux_setup_proot() {
 	# execute target binaries during compilation. qemu-user expects the Android
 	# dynamic linker at /system/bin/linker{,64}.
 	#
-	# aosp-libs installs a bionic runtime under $TERMUX_PREFIX/opt/aosp, so bind
-	# that directory to /system inside proot.
+	# aosp-libs installs a bionic runtime under $TERMUX_PREFIX/opt/aosp.
+	# We bind it to /system inside proot, and also set up QEMU_LD_PREFIX so qemu
+	# can resolve /system/bin/linker{,64} even when the filesystem emulation layer
+	# is bypassed by some tooling.
 	local _proot_binds=""
 	if [[ -d "$TERMUX_PREFIX/opt/aosp" ]]; then
 		_proot_binds+=" -b $TERMUX_PREFIX/opt/aosp:/system"
 	fi
+
+	# QEMU_LD_PREFIX expects a directory prefix which contains the target's
+	# interpreter + libraries at their absolute paths (e.g. $prefix/system/bin/linker64).
+	# Create a small synthetic tree in the proot cache pointing to aosp-libs.
+	local _qemu_ld_prefix="$TERMUX_PROOT_BIN/qemu-ld-prefix"
+	mkdir -p "$_qemu_ld_prefix/system"
+	ln -sfn "$TERMUX_PREFIX/opt/aosp/bin" "$_qemu_ld_prefix/system/bin"
+	ln -sfn "$TERMUX_PREFIX/opt/aosp/lib" "$_qemu_ld_prefix/system/lib"
+	ln -sfn "$TERMUX_PREFIX/opt/aosp/lib64" "$_qemu_ld_prefix/system/lib64"
+
 	# Provide an empty /data to satisfy ANDROID_DATA.
 	mkdir -p "$TERMUX_PROOT_BIN/proot-data"
 	_proot_binds+=" -b $TERMUX_PROOT_BIN/proot-data:/data"
@@ -63,6 +75,7 @@ termux_setup_proot() {
 			PATH="$TERMUX_PREFIX/bin:$PATH" \
 			ANDROID_DATA=/data \
 			ANDROID_ROOT=/system \
+			QEMU_LD_PREFIX="$_qemu_ld_prefix" \
 			HOME=$TERMUX_ANDROID_HOME \
 			LANG=en_US.UTF-8 \
 			PREFIX=$TERMUX_PREFIX \
