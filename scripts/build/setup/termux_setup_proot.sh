@@ -64,6 +64,10 @@ termux_setup_proot() {
 	ln -sfn "$TERMUX_PREFIX/opt/aosp/lib" "$_qemu_ld_prefix/system/lib"
 	ln -sfn "$TERMUX_PREFIX/opt/aosp/lib64" "$_qemu_ld_prefix/system/lib64"
 
+	# Ensure qemu-user can resolve the target dynamic linker/libs even when target
+	# executables are invoked outside termux-proot-run (e.g. by cabal build tools).
+	export QEMU_LD_PREFIX="${QEMU_LD_PREFIX:-$_qemu_ld_prefix}"
+
 	# Provide an empty /data to satisfy ANDROID_DATA.
 	mkdir -p "$TERMUX_PROOT_BIN/proot-data"
 	_proot_binds+=" -b $TERMUX_PROOT_BIN/proot-data:/data"
