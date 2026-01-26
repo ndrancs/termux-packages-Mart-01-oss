@@ -417,7 +417,7 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout termux-packages
         uses: actions/checkout@v5
@@ -428,7 +428,12 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git gnupg
+          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git gnupg gh jq
+
+      - name: Prepare release/publish directories
+        run: |
+          set -euo pipefail
+          mkdir -p prebuilt-debs prebuilt-debs-large prebuilt-debs-small
 
       - name: Import repo signing key (optional)
         env:
@@ -473,34 +478,120 @@ jobs:
           merge-multiple: true
 
       - id: debs
-        name: Find debs to publish
+        name: Find & split debs (small->pages, large->release)
         run: |
           set -euo pipefail
-          mkdir -p prebuilt-debs
+          mkdir -p prebuilt-debs prebuilt-debs-large prebuilt-debs-small
           find prebuilt-debs -type f ! -name '*.deb' -delete || true
 
-          count="$(find prebuilt-debs -maxdepth 2 -type f -name '*.deb' | wc -l | tr -d ' ')"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
+          total="$(find prebuilt-debs -maxdepth 2 -type f -name '*.deb' | wc -l | tr -d ' ')"
+          echo "count=$total" >> "$GITHUB_OUTPUT"
 
-          if [ "$count" -eq 0 ]; then
+          if [ "$total" -eq 0 ]; then
             echo "[*] No .deb files produced by build shards; skipping publish."
             echo "has_debs=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "[*] Debs to publish ($count):"
-          find prebuilt-debs -maxdepth 2 -type f -name '*.deb' -print
+          threshold_mb=99
+          threshold_bytes=$((threshold_mb*1024*1024))
+
+          large=0
+          small=0
+          while IFS= read -r f; do
+            size="$(stat -c%s "$f")"
+            base="$(basename "$f")"
+            if [ "$size" -ge "$threshold_bytes" ]; then
+              cp -f "$f" "prebuilt-debs-large/$base"
+              large=$((large+1))
+            else
+              cp -f "$f" "prebuilt-debs-small/$base"
+              small=$((small+1))
+            fi
+          done < <(find prebuilt-debs -maxdepth 2 -type f -name '*.deb' -print)
+
+          echo "[*] Debs total=$total small=$small large=$large (threshold=${threshold_mb}MiB)"
+          echo "large_count=$large" >> "$GITHUB_OUTPUT"
+          echo "small_count=$small" >> "$GITHUB_OUTPUT"
+
+          if [ "$small" -gt 0 ]; then
+            echo "has_small=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_small=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$large" -gt 0 ]; then
+            echo "has_large=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_large=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "[*] Debs (small):"; ls -lah prebuilt-debs-small || true
+          echo "[*] Debs (large):"; ls -lah prebuilt-debs-large || true
+
           echo "has_debs=true" >> "$GITHUB_OUTPUT"
 
-      - name: Publish debs into pages APT repo
+      - name: Create/update GitHub Release tag for large deb assets
+        if: ${{ steps.debs.outputs.has_large == 'true' }}
+        id: rel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="Packages"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # Create the tag release if it doesn't exist. If it exists, keep it.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "[*] Release '$tag' already exists"
+          else
+            echo "[*] Creating release '$tag'"
+            gh release create "$tag" --title "Packages" --notes "Large .deb assets for NeonIDE APT repo." --latest=false
+          fi
+
+      - name: Upload large debs to GitHub Release (Packages)
+        if: ${{ steps.debs.outputs.has_large == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="Packages"
+          shopt -s nullglob
+          files=(prebuilt-debs-large/*.deb)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No large files to upload."
+            exit 0
+          fi
+
+          # Skip upload for assets that already exist with same name and size.
+          assets_json="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")"
+
+          for f in "${files[@]}"; do
+            name="$(basename "$f")"
+            size="$(stat -c%s "$f")"
+            existing_size="$(jq -r --arg n "$name" '.assets[]? | select(.name==$n) | .size' <<<"$assets_json" | head -n1)"
+            if [ -n "$existing_size" ] && [ "$existing_size" != "null" ] && [ "$existing_size" = "$size" ]; then
+              echo "[=] Release asset already exists (same size), skipping: $name"
+              continue
+            fi
+            echo "[+] Uploading release asset: $name ($size bytes)"
+            gh release upload "$tag" "$f" --clobber
+          done
+
+      - name: Publish debs into pages APT repo (store small in pages, reference large via release)
         if: ${{ steps.debs.outputs.has_debs == 'true' }}
         env:
           PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
+          # Provide ALL debs so the script can generate external stanzas for large ones.
           DEBS_DIR: ${{ github.workspace }}/prebuilt-debs
           APT_DIST: stable
           APT_COMPONENT: main
           APT_ARCH: aarch64
           FORCE_OVERWRITE: "false"
+          NEONIDE_LARGE_DEB_PUBLISH_MODE: release
+          NEONIDE_LARGE_DEB_THRESHOLD_MB: "99"
+          # Always reference the canonical repo/tag for large assets
+          NEONIDE_LARGE_DEB_RELEASE_BASE_URL: "https://github.com/Mart-01-oss/termux-packages/releases/download/Packages"
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
         run: |

@@ -31,6 +31,14 @@ on:
         description: "APT arch directory (binary-<arch>)"
         required: false
         default: "aarch64"
+      large_deb_threshold_mb:
+        description: "Treat debs >= this size (MiB) as large and publish via GitHub Release assets"
+        required: false
+        default: "99"
+      large_deb_release_tag:
+        description: "Git tag/release name to upload large deb assets to"
+        required: false
+        default: "Packages"
       force_overwrite:
         description: "Overwrite existing debs even if different"
         required: false
@@ -46,13 +54,14 @@ on:
         type: boolean
         default: false
 
-permissions: {}
+permissions:
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout termux-packages
         uses: actions/checkout@v5
@@ -61,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git gnupg
+          sudo apt-get install -y --no-install-recommends dpkg-dev gzip ca-certificates git gnupg gh jq
 
       - name: Download prebuilt deb artifact
         if: ${{ inputs.deb_file_path == '' && inputs.deb_url == '' }}
@@ -120,7 +129,64 @@ jobs:
           rm -rf pages-repo
           git clone "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
 
-      - name: Publish debs into pages APT repo
+      - name: Upload large debs to GitHub Release (if any)
+        if: ${{ inputs.deb_file_path == '' && inputs.deb_url == '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.large_deb_release_tag }}'
+          threshold_mb='${{ inputs.large_deb_threshold_mb }}'
+          threshold_bytes=$((threshold_mb*1024*1024))
+
+          shopt -s nullglob
+          files=(prebuilt-debs/*.deb)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No debs to consider for release upload."
+            exit 0
+          fi
+
+          # Determine if there are any large files before creating a release.
+          has_large=0
+          for f in "${files[@]}"; do
+            size="$(stat -c%s "$f")"
+            if [ "$size" -ge "$threshold_bytes" ]; then
+              has_large=1
+              break
+            fi
+          done
+          if [ "$has_large" -ne 1 ]; then
+            echo "No large debs (>=${threshold_mb}MiB); skipping release upload."
+            exit 0
+          fi
+
+          # Ensure release exists
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "[*] Release '$tag' already exists"
+          else
+            echo "[*] Creating release '$tag'"
+            gh release create "$tag" --title "$tag" --notes "Large .deb assets for NeonIDE APT repo." --latest=false
+          fi
+
+          assets_json="$(gh api -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")"
+
+          for f in "${files[@]}"; do
+            size="$(stat -c%s "$f")"
+            if [ "$size" -lt "$threshold_bytes" ]; then
+              continue
+            fi
+            name="$(basename "$f")"
+            existing_size="$(jq -r --arg n "$name" '.assets[]? | select(.name==$n) | .size' <<<"$assets_json" | head -n1)"
+            if [ -n "$existing_size" ] && [ "$existing_size" != "null" ] && [ "$existing_size" = "$size" ]; then
+              echo "[=] Release asset already exists (same size), skipping: $name"
+              continue
+            fi
+            echo "[+] Uploading release asset: $name ($size bytes)"
+            gh release upload "$tag" "$f" --clobber
+          done
+
+      - name: Publish debs into pages APT repo (store small in pages, reference large via release)
         env:
           PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
           # Either publish a whole dir of debs (artifact or deb_url) or a single deb file path.
@@ -132,6 +198,10 @@ jobs:
           FORCE_OVERWRITE: ${{ inputs.force_overwrite && 'true' || 'false' }}
           EXPECTED_PACKAGES: ${{ inputs.expected_packages }}
           FAIL_ON_RECIPE_MISMATCH: ${{ inputs.fail_on_recipe_mismatch && 'true' || 'false' }}
+          NEONIDE_LARGE_DEB_PUBLISH_MODE: release
+          NEONIDE_LARGE_DEB_THRESHOLD_MB: ${{ inputs.large_deb_threshold_mb }}
+          # Always reference the canonical repo/tag for large assets
+          NEONIDE_LARGE_DEB_RELEASE_BASE_URL: ${{ format('https://github.com/{0}/releases/download/{1}', 'Mart-01-oss/termux-packages', inputs.large_deb_release_tag) }}
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
         run: |

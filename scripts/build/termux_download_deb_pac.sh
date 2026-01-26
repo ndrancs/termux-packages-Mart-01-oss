@@ -54,7 +54,12 @@ termux_download_deb_pac() {
 						if [ "$TERMUX_WITHOUT_DEPVERSION_BINDING" = "true" ] || [ $(jq -r '."'$PACKAGE'"."VERSION"' "${TERMUX_COMMON_CACHEDIR}-${arch}/$PACKAGE_FILE_PATH") = "${VERSION_PACMAN}" ]; then
 							PKG_HASH=$(jq -r '."'$PACKAGE'"."SHA256SUM"' "${TERMUX_COMMON_CACHEDIR}-${arch}/$PACKAGE_FILE_PATH")
 							PKG_PATH=$(jq -r '."'$PACKAGE'"."FILENAME"' "${TERMUX_COMMON_CACHEDIR}-${arch}/$PACKAGE_FILE_PATH")
-							PKG_PATH="${arch}/${PKG_PATH}"
+							# If Packages provides an absolute URL (e.g. GitHub Releases), don't prefix with arch.
+							if [[ "$PKG_PATH" =~ ^https?:// ]]; then
+								:
+							else
+								PKG_PATH="${arch}/${PKG_PATH}"
+							fi
 						fi
 					fi
 					if [ -n "$PKG_HASH" ] && [ "$PKG_HASH" != "null" ]; then
@@ -82,7 +87,11 @@ termux_download_deb_pac() {
 				if [ "$TERMUX_WITHOUT_DEPVERSION_BINDING" = "true" ] || [ $(jq -r '."'$PACKAGE'"."VERSION"' "${TERMUX_COMMON_CACHEDIR}-aarch64/$PACKAGE_FILE_PATH") = "${VERSION_PACMAN}"]; then
 					PKG_HASH=$(jq -r '."'$PACKAGE'"."SHA256SUM"' "${TERMUX_COMMON_CACHEDIR}-aarch64/$PACKAGE_FILE_PATH")
 					PKG_PATH=$(jq -r '."'$PACKAGE'"."FILENAME"' "${TERMUX_COMMON_CACHEDIR}-aarch64/$PACKAGE_FILE_PATH")
-					PKG_PATH="aarch64/${PKG_PATH}"
+					if [[ "$PKG_PATH" =~ ^https?:// ]]; then
+						:
+					else
+						PKG_PATH="aarch64/${PKG_PATH}"
+					fi
 				fi
 			fi
 			if [ -n "$PKG_HASH" ] && [ "$PKG_HASH" != "null" ]; then
@@ -102,7 +111,11 @@ termux_download_deb_pac() {
 				if [ "$TERMUX_WITHOUT_DEPVERSION_BINDING" = "true" ] || [ $(jq -r '."'$PACKAGE'"."VERSION"' "${TERMUX_COMMON_CACHEDIR}-${PACKAGE_ARCH}/$PACKAGE_FILE_PATH") = "${VERSION_PACMAN}" ]; then
 					PKG_HASH=$(jq -r '."'$PACKAGE'"."SHA256SUM"' "${TERMUX_COMMON_CACHEDIR}-${PACKAGE_ARCH}/$PACKAGE_FILE_PATH")
 					PKG_PATH=$(jq -r '."'$PACKAGE'"."FILENAME"' "${TERMUX_COMMON_CACHEDIR}-${PACKAGE_ARCH}/$PACKAGE_FILE_PATH")
-					PKG_PATH="${PACKAGE_ARCH}/${PKG_PATH}"
+					if [[ "$PKG_PATH" =~ ^https?:// ]]; then
+						:
+					else
+						PKG_PATH="${PACKAGE_ARCH}/${PKG_PATH}"
+					fi
 				fi
 			fi
 			if [ -n "$PKG_HASH" ] && [ "$PKG_HASH" != "null" ]; then
@@ -122,7 +135,16 @@ termux_download_deb_pac() {
 		return 1
 	fi
 
-	termux_download "${TERMUX_REPO_URL[${idx}-1]}/${PKG_PATH}" \
+	# Packages 'Filename:' is usually a relative path under the repo base URL.
+	# However, for externally-hosted packages we support absolute URLs (e.g. GitHub Releases).
+	local url
+	if [[ "$PKG_PATH" =~ ^https?:// ]]; then
+		url="$PKG_PATH"
+	else
+		url="${TERMUX_REPO_URL[${idx}-1]}/${PKG_PATH}"
+	fi
+
+	termux_download "$url" \
 				"${TERMUX_COMMON_CACHEDIR}-${PACKAGE_ARCH}/${PKG_FILE}" \
 				"$PKG_HASH"
 }

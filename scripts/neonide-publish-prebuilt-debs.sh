@@ -17,6 +17,24 @@ set -euo pipefail
 #   FORCE_OVERWRITE           (default: false) overwrite existing debs
 #   NEONIDE_GPG_KEY_ID        (optional) key id to sign Release/InRelease
 #   NEONIDE_GPG_PASSPHRASE    (optional) passphrase for loopback signing
+#
+# Large deb handling (to avoid bloating the Pages repo):
+#   NEONIDE_LARGE_DEB_PUBLISH_MODE
+#     - pages   (default): publish debs into pages repo pool/ as usual
+#     - release: do NOT store large debs in pages repo; instead reference them by URL
+#                in Packages, and keep their package stanzas in Packages.external
+#                so they remain in the repo across runs.
+#   NEONIDE_LARGE_DEB_THRESHOLD_MB   (default: 99) size threshold in MiB
+#   NEONIDE_LARGE_DEB_RELEASE_BASE_URL
+#     Base URL for release assets, e.g.
+#       https://github.com/<owner>/<repo>/releases/download/Packages
+#     The deb filename will be appended (e.g. .../cmake_1.2.3_aarch64.deb).
+#
+# Packages Filename formatting:
+#   NEONIDE_PACKAGES_PREFIX_DOTSLASH (default: true)
+#     If true, prefix relative Filename entries with "./" (e.g. ./pool/...).
+#     Absolute URLs (https://...) are left untouched and are used only for
+#     release-hosted large debs.
 
 : "${PAGES_REPO_DIR:?PAGES_REPO_DIR is required}"
 
@@ -34,6 +52,11 @@ fi
 : "${APT_COMPONENT:=main}"
 : "${APT_ARCH:=aarch64}"
 : "${FORCE_OVERWRITE:=false}"
+
+: "${NEONIDE_LARGE_DEB_PUBLISH_MODE:=pages}"
+: "${NEONIDE_LARGE_DEB_THRESHOLD_MB:=99}"
+: "${NEONIDE_LARGE_DEB_RELEASE_BASE_URL:=}"
+: "${NEONIDE_PACKAGES_PREFIX_DOTSLASH:=true}"
 
 # Optional validation/selection
 : "${EXPECTED_PACKAGES:=}"           # space/newline separated list of package names expected
@@ -56,6 +79,75 @@ pool_group_for_pkg() {
   else
     echo "${name:0:1}"
   fi
+}
+
+is_large_deb() {
+  local deb="$1"
+  local bytes
+  bytes="$(stat -c%s "$deb" 2>/dev/null || wc -c < "$deb")"
+  # MiB threshold
+  local thresh_bytes=$((NEONIDE_LARGE_DEB_THRESHOLD_MB * 1024 * 1024))
+  [[ "$bytes" -ge "$thresh_bytes" ]]
+}
+
+# Remove any existing stanza for a binary package from Packages.external.
+# We keep only one stanza per Package: to avoid accumulating old versions.
+remove_pkg_stanza() {
+  local pkg="$1" file="$2"
+  [[ ! -f "$file" ]] && return 0
+  local tmp
+  tmp="$(mktemp)"
+  awk -v pkg="$pkg" 'BEGIN{RS=""; ORS="\n\n"; FS="\n"}
+    {
+      keep=1
+      for(i=1;i<=NF;i++){
+        if($i=="Package: "pkg){keep=0; break}
+      }
+      if(keep){print $0}
+    }' "$file" > "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+# Generate a Packages stanza for a single deb by running dpkg-scanpackages on a temp pool.
+# Prints the stanza to stdout.
+generate_packages_stanza_for_deb() {
+  local deb="$1" pkg="$2" apt_component="$3"
+  local group="$(pool_group_for_pkg "$pkg")"
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  mkdir -p "$tmpdir/pool/${apt_component}/$group/$pkg"
+  cp -f "$deb" "$tmpdir/pool/${apt_component}/$group/$pkg/"
+
+  (
+    cd "$tmpdir"
+    dpkg-scanpackages -m pool /dev/null
+  )
+  rm -rf "$tmpdir"
+}
+
+# Normalize Filename: fields for apt Packages files.
+# - Keep absolute URLs as-is (https://...)
+# - Prefix relative paths with "./" if enabled.
+normalize_packages_filenames_inplace() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  [[ "$NEONIDE_PACKAGES_PREFIX_DOTSLASH" == "true" ]] || return 0
+
+  local tmp
+  tmp="$(mktemp)"
+  awk 'BEGIN{OFS=""}
+    {
+      if ($0 ~ /^Filename: /) {
+        fn=$0
+        sub(/^Filename: /, "", fn)
+        if (fn ~ /^https?:\/\//) { print $0; next }
+        if (fn ~ /^\.\//) { print $0; next }
+        print "Filename: ./", fn; next
+      }
+      print $0
+    }' "$file" > "$tmp"
+  mv -f "$tmp" "$file"
 }
 
 get_pkg_name_from_deb() {
@@ -124,6 +216,18 @@ deb_field() {
 
 mismatch=0
 copied=0
+external_added=0
+
+PACKAGES_DIR_REL="dists/${APT_DIST}/${APT_COMPONENT}/binary-${APT_ARCH}"
+PACKAGES_PATH="$PAGES_REPO_DIR/${PACKAGES_DIR_REL}/Packages"
+PACKAGES_EXTERNAL_PATH="$PAGES_REPO_DIR/${PACKAGES_DIR_REL}/Packages.external"
+mkdir -p "$PAGES_REPO_DIR/${PACKAGES_DIR_REL}"
+
+if [[ "$NEONIDE_LARGE_DEB_PUBLISH_MODE" == "release" && -z "$NEONIDE_LARGE_DEB_RELEASE_BASE_URL" ]]; then
+  echo "ERROR: NEONIDE_LARGE_DEB_PUBLISH_MODE=release requires NEONIDE_LARGE_DEB_RELEASE_BASE_URL" >&2
+  exit 1
+fi
+
 shopt -s nullglob
 for deb in "$DEBS_DIR"/*.deb; do
   pkg="$(get_pkg_name_from_deb "$deb")"
@@ -176,6 +280,55 @@ for deb in "$DEBS_DIR"/*.deb; do
     : # (informational only)
   fi
 
+  # Large deb handling: keep deb out of pages repo, but keep its stanza in Packages.external
+  # and set Filename to the GitHub Release asset URL.
+  if [[ "$NEONIDE_LARGE_DEB_PUBLISH_MODE" == "release" ]] && is_large_deb "$deb"; then
+    echo "[*] Large deb detected (>=${NEONIDE_LARGE_DEB_THRESHOLD_MB}MiB): $(basename "$deb")"
+
+    # Generate package stanza using dpkg-scanpackages on a temporary pool.
+    stanza="$(generate_packages_stanza_for_deb "$deb" "$pkg" "$APT_COMPONENT")"
+
+    # Replace Filename: with absolute URL pointing at release asset.
+    # dpkg-scanpackages emits: Filename: pool/<component>/<group>/<pkg>/<file>
+    release_url="${NEONIDE_LARGE_DEB_RELEASE_BASE_URL%/}/$(basename "$deb")"
+    stanza="$(sed -E "s|^Filename: .*|Filename: ${release_url}|" <<<"$stanza")"
+
+    # If an existing stanza already matches (same Filename + SHA256), skip updating.
+    if [[ -f "$PACKAGES_EXTERNAL_PATH" ]]; then
+      want_sha="$(awk -F': ' '$1=="SHA256"{print $2; exit}' <<<"$stanza")"
+      want_fn="$(awk -F': ' '$1=="Filename"{print $2; exit}' <<<"$stanza")"
+      if awk -v pkg="$pkg" -v sha="$want_sha" -v fn="$want_fn" 'BEGIN{RS="";FS="\n"}
+          {
+            p=""; s=""; f="";
+            for(i=1;i<=NF;i++){
+              if($i=="Package: "pkg){p=1}
+              else if($i=="SHA256: "sha){s=1}
+              else if($i=="Filename: "fn){f=1}
+            }
+            if(p && s && f){found=1}
+          }
+          END{exit(found?0:1)}' "$PACKAGES_EXTERNAL_PATH"; then
+        echo "[=] External stanza already up-to-date for $pkg"
+        continue
+      fi
+    fi
+
+    # Update Packages.external (remove old stanza for this Package: then append).
+    remove_pkg_stanza "$pkg" "$PACKAGES_EXTERNAL_PATH"
+    {
+      # Ensure file ends with a blank line between stanzas.
+      if [[ -s "$PACKAGES_EXTERNAL_PATH" ]]; then
+        printf '\n'
+      fi
+      printf '%s\n' "$stanza" | sed -e '${/^$/d;}'
+      printf '\n'
+    } >> "$PACKAGES_EXTERNAL_PATH"
+
+    echo "[+] Added/updated external package stanza for $pkg -> $release_url"
+    external_added=1
+    continue
+  fi
+
   group="$(pool_group_for_pkg "$pkg")"
   dest_dir="$PAGES_REPO_DIR/pool/${APT_COMPONENT}/$group/$pkg"
   mkdir -p "$dest_dir"
@@ -211,14 +364,28 @@ if [[ $copied -ne 1 ]]; then
   echo "WARN: No .deb files were published from $DEBS_DIR" >&2
 fi
 
-echo "[*] Regenerating Packages and Packages.gz from pool..."
+echo "[*] Regenerating Packages and Packages.gz from pool (+ Packages.external if present)..."
 (
   cd "$PAGES_REPO_DIR"
-  mkdir -p "dists/${APT_DIST}/${APT_COMPONENT}/binary-${APT_ARCH}"
-  dpkg-scanpackages -m pool /dev/null > "dists/${APT_DIST}/${APT_COMPONENT}/binary-${APT_ARCH}/Packages"
+  mkdir -p "$PACKAGES_DIR_REL"
+
+  tmp_packages="${PACKAGES_DIR_REL}/Packages.tmp"
+  dpkg-scanpackages -m pool /dev/null > "$tmp_packages"
+
+  # Merge in externally-hosted package stanzas (large debs stored in GitHub Releases).
+  if [[ -s "$PACKAGES_DIR_REL/Packages.external" ]]; then
+    printf '\n' >> "$tmp_packages"
+    cat "$PACKAGES_DIR_REL/Packages.external" >> "$tmp_packages"
+  fi
+
+  mv -f "$tmp_packages" "$PACKAGES_DIR_REL/Packages"
+
+  # Ensure relative filenames have the expected ./ prefix (URLs untouched).
+  normalize_packages_filenames_inplace "$PACKAGES_DIR_REL/Packages"
+  normalize_packages_filenames_inplace "$PACKAGES_DIR_REL/Packages.external"
 
   # Keep output identical to scripts/neonide-build-and-publish-pages.sh
-  gzip -9 -c "dists/${APT_DIST}/${APT_COMPONENT}/binary-${APT_ARCH}/Packages" > "dists/${APT_DIST}/${APT_COMPONENT}/binary-${APT_ARCH}/Packages.gz"
+  gzip -9 -c "$PACKAGES_DIR_REL/Packages" > "$PACKAGES_DIR_REL/Packages.gz"
 )
 
 echo "[*] Regenerating dists/${APT_DIST}/Release metadata (hashes + sizes)..."
