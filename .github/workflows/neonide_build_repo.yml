@@ -342,8 +342,9 @@ jobs:
               TERMUX_USE_OFFICIAL_REPO_FALLBACK="false" \
               # Flat APT repo hosted as GitHub Release assets (large debs)
               TERMUX_RELEASE_DEB_REPO_URL="https://github.com/Mart-01-oss/pages/releases/download/Package" \
+              HOME="/home/builder" \
               PKG="$pkg" \
-              bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "INFO: NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi; exec ./build-package.sh -i -a aarch64 "$PKG"' 2>&1 | tee -a "$log_path"
+              bash -lc 'set -euo pipefail; cd /home/builder/termux-packages; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "INFO: NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi; exec ./build-package.sh -i -a aarch64 "$PKG"' 2>&1 | tee -a "$log_path"
             rc=${PIPESTATUS[0]}
 
             if [ $rc -ne 0 ]; then
@@ -364,8 +365,9 @@ jobs:
                 TERMUX_USE_OFFICIAL_REPO_FALLBACK="false" \
                 # Flat APT repo hosted as GitHub Release assets (large debs)
                 TERMUX_RELEASE_DEB_REPO_URL="https://github.com/Mart-01-oss/pages/releases/download/Package" \
+                HOME="/home/builder" \
                 PKG="$pkg" \
-                bash -lc 'set -euo pipefail; cd "$HOME/termux-packages"; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "INFO: NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi; exec ./build-package.sh -a aarch64 "$PKG"' 2>&1 | tee -a "$log_path"
+                bash -lc 'set -euo pipefail; cd /home/builder/termux-packages; . ./scripts/properties.sh; if [ ! -d "$NDK" ]; then echo "INFO: NDK missing in container at $NDK, running setup-android-sdk.sh"; ./scripts/setup-android-sdk.sh; fi; exec ./build-package.sh -a aarch64 "$PKG"' 2>&1 | tee -a "$log_path"
               rc=${PIPESTATUS[0]}
             fi
             set +o pipefail
