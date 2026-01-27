@@ -1,8 +1,6 @@
-diff --git a/reformatter/CMakeLists.txt b/reformatter/CMakeLists.txt
-index 1ea291f..c1a31c2 100644
---- a/reformatter/CMakeLists.txt
-+++ b/reformatter/CMakeLists.txt
-@@ -35,10 +35,11 @@ IF (NOT WIN32)
+--- a/reformatter/CMakeLists.txt	2026-01-27 14:20:16.353884239 +0800
++++ b/reformatter/CMakeLists.txt	2026-01-27 14:20:16.505884239 +0800
+@@ -34,10 +34,9 @@
      TARGET_LINK_LIBRARIES(json_reformat m)
  ENDIF (NOT WIN32)
  
@@ -16,11 +14,10 @@ index 1ea291f..c1a31c2 100644
 +            ${binDir}/$<TARGET_FILE_NAME:json_reformat>)
  
  INSTALL(TARGETS json_reformat RUNTIME DESTINATION bin)
-diff --git a/verify/CMakeLists.txt b/verify/CMakeLists.txt
-index db8b5d3..331f2fe 100644
---- a/verify/CMakeLists.txt
-+++ b/verify/CMakeLists.txt
-@@ -29,10 +29,11 @@ ADD_EXECUTABLE(json_verify ${SRCS})
+
+--- a/verify/CMakeLists.txt	2026-01-27 14:20:16.365884239 +0800
++++ b/verify/CMakeLists.txt	2026-01-27 14:20:16.505884239 +0800
+@@ -28,10 +28,9 @@
  
  TARGET_LINK_LIBRARIES(json_verify yajl_s)
  
