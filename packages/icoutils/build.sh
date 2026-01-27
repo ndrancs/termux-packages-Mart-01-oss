@@ -3,9 +3,11 @@ TERMUX_PKG_DESCRIPTION="Extracts and converts images in MS Windows(R) icon and c
 TERMUX_PKG_LICENSE="GPL-3.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION=0.32.3
-TERMUX_PKG_REVISION=1
-TERMUX_PKG_SRCURL=https://savannah.nongnu.org/download/icoutils/icoutils-$TERMUX_PKG_VERSION.tar.bz2
-TERMUX_PKG_SHA256=99fa3784af5d3a84845ec4e0397a4ebef787b2958bea9639a23153afa974e690
+TERMUX_PKG_REVISION=2
+# NOTE: savannah.nongnu.org/download is unreliable (timeouts / inconsistent content),
+# which breaks checksum verification in CI. Use the canonical Savannah "releases" mirror instead.
+TERMUX_PKG_SRCURL=https://download.savannah.nongnu.org/releases/icoutils/icoutils-$TERMUX_PKG_VERSION.tar.bz2
+TERMUX_PKG_SHA256=17abe02d043a253b68b47e3af69c9fc755b895db68fdc8811786125df564c6e0
 TERMUX_PKG_DEPENDS="libpng, perl"
 
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
