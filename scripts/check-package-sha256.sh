@@ -313,6 +313,26 @@ with open(FAILURES_TSV, 'w', encoding='utf-8') as f:
             r['repo_path'], r['pkg_name'], r['url'], r['expected'], r['actual'], r['status'], r['build_sh'], r['idx']
         ]) + '\n')
 
+# Human-friendly log output (matches typical Termux style)
+for r in failures:
+    if r['status'] == 'MISMATCH':
+        print(f"Wrong checksum for {r['url']}")
+        print(f"Expected: {r['expected']}")
+        print(f"Actual:   {r['actual']}")
+        print()
+    elif r['status'] == 'MISSING_EXPECTED':
+        print(f"Missing checksum for {r['url']}")
+        print(f"Actual:   {r['actual']}")
+        print(f"build.sh: {r['build_sh']}")
+        print()
+    elif r['status'] == 'EVAL_FAIL':
+        print(f"Failed to evaluate build.sh: {r['build_sh']}")
+        print()
+    elif r['status'].startswith('ERROR'):
+        print(f"Failed to download {r['url']} ({r['status']})")
+        print(f"build.sh: {r['build_sh']}")
+        print()
+
 # Optionally fix build.sh for packages where *all* checked URLs have actual shas and at least one mismatch.
 fixed_files = []
 if FIX:
