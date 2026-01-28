@@ -16,21 +16,59 @@ TERMUX_PKG_PLATFORM_INDEPENDENT=true
 
 termux_step_configure() {
 	if [ "$TERMUX_ON_DEVICE_BUILD" != true ]; then
-		# Create temporary symlink to workaround luarock bootstrap
-		# script trying to run cross-compiled lua
-		mv "$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"{,.bak}
-		ln -sf /usr/bin/lua"$__LUA_VERSION" "$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"
+		# When cross-compiling, luarocks' configure/bootstrap needs a *host*
+		# runnable lua interpreter. The lua51 package provides a target binary
+		# which can't run on the build host, and /usr/bin/lua5.1 may not exist
+		# in CI environments. Build a minimal host Lua 5.1 and temporarily
+		# expose it as $PREFIX/bin/lua5.1.
+		local _lua_bin="$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"
+		local _lua_bin_bak="${_lua_bin}.bak"
+		local _restore_lua=false
+
+		if [ -e "${_lua_bin}" ] && [ ! -L "${_lua_bin}" ]; then
+			mv "${_lua_bin}" "${_lua_bin_bak}"
+			_restore_lua=true
+		fi
+
+		local _hostlua_dir="$TERMUX_PKG_HOSTBUILD_DIR/host-lua-${__LUA_VERSION}"
+		local _hostlua_bin="${_hostlua_dir}/src/lua"
+		if [ ! -x "${_hostlua_bin}" ]; then
+			mkdir -p "$TERMUX_PKG_HOSTBUILD_DIR"
+			local _lua_ver=5.1.5
+			local _tar="$TERMUX_PKG_HOSTBUILD_DIR/lua-${_lua_ver}.tar.gz"
+			local _src="$TERMUX_PKG_HOSTBUILD_DIR/lua-${_lua_ver}"
+			if [ ! -f "${_tar}" ]; then
+				curl -L --fail -o "${_tar}" "https://www.lua.org/ftp/lua-${_lua_ver}.tar.gz"
+			fi
+			rm -rf "${_src}" "${_hostlua_dir}"
+			tar -C "$TERMUX_PKG_HOSTBUILD_DIR" -xzf "${_tar}"
+			mv "${_src}" "${_hostlua_dir}"
+			local _hostcc
+			_hostcc="$(command -v cc || command -v gcc)"
+			make -C "${_hostlua_dir}" linux CC="${_hostcc}"
+		fi
+
+		ln -sf "${_hostlua_bin}" "${_lua_bin}"
+		export TERMUX_LUAROCKS__RESTORE_LUA="${_restore_lua}"
 	fi
 
 	./configure --prefix="$TERMUX_PREFIX" \
-		--with-lua="$TERMUX_PREFIX"
+		--with-lua="$TERMUX_PREFIX" \
+		--lua-version="$__LUA_VERSION" \
+		--with-lua-bin="$TERMUX_PREFIX/bin"
 }
 
 termux_step_post_make_install() {
 	if [ "$TERMUX_ON_DEVICE_BUILD" != "true" ]; then
-		# Restore lua
-		unlink "$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"
-		mv "$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"{.bak,}
+		local _lua_bin="$TERMUX_PREFIX"/bin/lua"$__LUA_VERSION"
+		local _lua_bin_bak="${_lua_bin}.bak"
+		# Restore target lua binary if we temporarily moved it away.
+		if [ -L "${_lua_bin}" ]; then
+			unlink "${_lua_bin}"
+		fi
+		if [ "${TERMUX_LUAROCKS__RESTORE_LUA:-false}" = true ] && [ -e "${_lua_bin_bak}" ]; then
+			mv "${_lua_bin_bak}" "${_lua_bin}"
+		fi
 	fi
 }
 

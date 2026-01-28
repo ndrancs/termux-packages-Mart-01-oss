@@ -9,6 +9,13 @@ TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_UPDATE_VERSION_REGEXP='(?<=make-)\d+\_\d+\_\d+'
 TERMUX_PKG_DEPENDS="libobjc2"
 
+# Ensure GNUstep Makefiles always link ObjC programs with the ObjC runtime.
+# Some cross/build environments may mis-detect the runtime and end up omitting
+# the required -lobjc, which later causes undefined symbols like objc_alloc_init.
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
+--with-objc-lib-flag=-lobjc
+"
+
 termux_step_pre_configure() {
 	export OBJCXX="$CXX"
 }
