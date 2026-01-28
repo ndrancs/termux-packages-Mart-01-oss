@@ -9,6 +9,9 @@ TERMUX_PKG_SHA256=e7546f1c978a7c75b676953a360194a61e921cb45a4804497b4f346a460545
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_UPDATE_VERSION_REGEXP='(?<=-).+'
 TERMUX_PKG_DEPENDS="gnustep-make, libcurl, libc++, libffi, libgmp, libgnutls, libiconv, libicu, libobjc2, libxml2, libxslt, zlib"
+# Ensure Objective-C runtime is available in the build environment.
+# Some build environments only install TERMUX_PKG_BUILD_DEPENDS.
+TERMUX_PKG_BUILD_DEPENDS="libobjc2"
 TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 --with-default-config=$TERMUX_PREFIX/etc/GNUstep/GNUstep.conf
@@ -41,10 +44,9 @@ ac_cv_func_setpgrp_void=yes
 
 termux_step_pre_configure() {
 	# GNUstep tools are Objective-C programs and need the Objective-C runtime.
-	# Termux toolchain adds -Wl,--as-needed globally which can drop -lobjc
-	# (especially if it appears early on the link line), leading to undefined
-	# symbols like objc_alloc/objc_alloc_init.
-	LDFLAGS+=" -Wl,--no-as-needed -lobjc -Wl,--as-needed"
+	# Add -lobjc via GNUstep make variables so it ends up in ALL_LIBS (after
+	# object files), avoiding --as-needed ordering issues.
+	export ADDITIONAL_OBJC_LIBS="${ADDITIONAL_OBJC_LIBS:-} -lobjc"
 
 	local bin="$TERMUX_PKG_BUILDDIR/bin"
 	mkdir -p "$bin"

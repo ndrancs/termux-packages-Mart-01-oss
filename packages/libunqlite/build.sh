@@ -7,3 +7,7 @@ TERMUX_PKG_VERSION=1.1.9
 TERMUX_PKG_SRCURL=https://github.com/symisc/unqlite/archive/refs/tags/v${TERMUX_PKG_VERSION}.tar.gz
 TERMUX_PKG_SHA256=33d5b5e7b2ca223942e77d31112d2e20512bc507808414451c8a98a7be5e15c0
 TERMUX_PKG_NO_STATICSPLIT=true
+
+# Newer CMake versions dropped compatibility with < 3.5. Upstream uses an old
+# cmake_minimum_required() version, so force policy baseline during configure.
+TERMUX_PKG_EXTRA_CONFIGURE_ARGS="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
