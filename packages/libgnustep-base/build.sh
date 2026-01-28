@@ -16,7 +16,10 @@ TERMUX_PKG_BUILD_IN_SRC=true
 
 # Some build environments / GNUstep makefile setups may ignore env overrides;
 # pass via make command line to ensure -lobjc is on the link line.
-TERMUX_PKG_EXTRA_MAKE_ARGS="ADDITIONAL_OBJC_LIBS=-lobjc"
+TERMUX_PKG_EXTRA_MAKE_ARGS="
+ADDITIONAL_OBJC_LIBS=-lobjc
+ADDITIONAL_OBJCFLAGS=-fno-objc-convert-messages-to-runtime-calls
+"
 
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 --with-default-config=$TERMUX_PREFIX/etc/GNUstep/GNUstep.conf
@@ -54,6 +57,7 @@ termux_step_pre_configure() {
 	export ADDITIONAL_OBJC_LIBS="${ADDITIONAL_OBJC_LIBS:-} -lobjc"
 	export OBJCFLAGS="${OBJCFLAGS:-} -fno-objc-convert-messages-to-runtime-calls"
 	export ADDITIONAL_OBJCFLAGS="${ADDITIONAL_OBJCFLAGS:-} -fno-objc-convert-messages-to-runtime-calls"
+	export LDFLAGS="${LDFLAGS:-} -lobjc"
 
 	local bin="$TERMUX_PKG_BUILDDIR/bin"
 	mkdir -p "$bin"
