@@ -1,0 +1,30 @@
+--- a/sdk/cmake/modules/sdklib_libraries.cmake
++++ b/sdk/cmake/modules/sdklib_libraries.cmake
+@@ -145,8 +145,21 @@
+ 		endif()
+ 
+ 		if(USE_C_ARES)
+ 			pkg_check_modules(cares REQUIRED IMPORTED_TARGET libcares)
++			# Termux .pc files contain absolute include paths under $TERMUX_PREFIX.
++			# Some CI / pkg-config setups may incorrectly apply a sysroot and end up
++			# duplicating the prefix (e.g. $TERMUX_PREFIX$TERMUX_PREFIX/include).
++			# CMake then errors out because the resulting path doesn't exist.
++			if(TARGET PkgConfig::cares)
++				get_target_property(_cares_includes PkgConfig::cares INTERFACE_INCLUDE_DIRECTORIES)
++				if(_cares_includes)
++					set(_cares_includes_filtered "")
++					foreach(_d IN LISTS _cares_includes)
++						if(EXISTS "${_d}")
++							list(APPEND _cares_includes_filtered "${_d}")
++						endif()
++					endforeach()
++					set_target_properties(PkgConfig::cares PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${_cares_includes_filtered}")
++				endif()
++			endif()
+ 			target_link_libraries(SDKlib PRIVATE PkgConfig::cares)
+ 			set(MEGA_USE_C_ARES 1)
+ 		endif()
+ 
+ 		if(USE_READLINE)
+ 			pkg_check_modules(readline REQUIRED IMPORTED_TARGET readline)
+ 			target_link_libraries(SDKlib PRIVATE PkgConfig::readline)
