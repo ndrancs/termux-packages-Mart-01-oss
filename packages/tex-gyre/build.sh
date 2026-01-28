@@ -13,7 +13,7 @@ TERMUX_PKG_BUILD_IN_SRC=true
 termux_step_post_get_source() {
 	termux_download https://www.gust.org.pl/fonts/licenses/GUST-FONT-LICENSE.txt \
 		$TERMUX_PKG_SRCDIR/GUST-FONT-LICENSE.txt \
-		a746108477b2fa685845e7596b7ad8342bc358704b2b7da355f2df0a0cb8ad85
+		5eb61bb836bb1845ef668717cb15b382e997748ce2629e4388cc5e4c3fa4e433
 }
 
 termux_step_make_install() {
