@@ -1,0 +1,52 @@
+--- a/Source/GNUmakefile
++++ b/Source/GNUmakefile
+@@ -623,8 +623,9 @@
+ 
+ # The Objective-C source files to be compiled
+ libgnustep-base_OBJC_FILES = $(GNU_MFILES) \
+-	$(BASE_MFILES)
++	$(BASE_MFILES) \
++	objc_alloc_init_compat.m
+ libgnustep-base_C_FILES = $(GNU_CFILES)
+ 
+ # Extra DLL exports file
+ libgnustep-base_DLL_DEF = libgnustep-base.def
+--- /dev/null
++++ b/Source/objc_alloc_init_compat.m
+@@ -0,0 +1,41 @@
++/*
++ * Compatibility shim for Android/Termux builds.
++ *
++ * Clang may lower Objective-C patterns like [[Foo alloc] init] into a direct
++ * call to objc_alloc_init(). libobjc2 does not provide this symbol on Android,
++ * which breaks linking of GNUstep tools (e.g. pl, autogsdoc).
++ *
++ * Provide a weak implementation that performs an alloc + init sequence via
++ * standard runtime message lookup.
++ */
++
++#include <objc/runtime.h>
++
++__attribute__((weak))
++id objc_alloc_init(Class cls)
++{
++	if (cls == Nil)
++		return nil;
++
++	SEL allocSel = sel_registerName("alloc");
++	SEL initSel = sel_registerName("init");
++
++	IMP allocImp = objc_msg_lookup((id)cls, allocSel);
++	if (allocImp == (IMP)0)
++		return nil;
++
++	id obj = ((id (*)(id, SEL))allocImp)((id)cls, allocSel);
++	if (obj == nil)
++		return nil;
++
++	IMP initImp = objc_msg_lookup(obj, initSel);
++	if (initImp == (IMP)0)
++		return obj;
++
++	return ((id (*)(id, SEL))initImp)(obj, initSel);
++}

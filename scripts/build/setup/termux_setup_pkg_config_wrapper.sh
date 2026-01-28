@@ -8,8 +8,8 @@ termux_setup_pkg_config_wrapper() {
 		# so applying a sysroot would duplicate prefixes (e.g. $TERMUX_PREFIX$TERMUX_PREFIX/include)
 		# and break CMake FindPkgConfig imported targets.
 		sed \
-			-e "s|^export PKG_CONFIG_DIR=|export PKG_CONFIG_DIR=\nunset PKG_CONFIG_SYSROOT_DIR|" \
-			-e "s|^export PKG_CONFIG_LIBDIR=|export PKG_CONFIG_LIBDIR=${_PKG_CONFIG_LIBDIR}:|" \
+			-e "s|^[[:space:]]*export PKG_CONFIG_DIR=|export PKG_CONFIG_DIR=\nunset PKG_CONFIG_SYSROOT_DIR|" \
+			-e "s|^[[:space:]]*export PKG_CONFIG_LIBDIR=|export PKG_CONFIG_LIBDIR=${_PKG_CONFIG_LIBDIR}:|" \
 			"${TERMUX_STANDALONE_TOOLCHAIN}/bin/pkg-config" \
 			> "${_WRAPPER_BIN}/pkg-config"
 		chmod +x "${_WRAPPER_BIN}/pkg-config"
