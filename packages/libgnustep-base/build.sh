@@ -47,6 +47,7 @@ termux_step_pre_configure() {
 	# Add -lobjc via GNUstep make variables so it ends up in ALL_LIBS (after
 	# object files), avoiding --as-needed ordering issues.
 	export ADDITIONAL_OBJC_LIBS="${ADDITIONAL_OBJC_LIBS:-} -lobjc"
+	export OBJCFLAGS="${OBJCFLAGS:-} -fno-objc-convert-messages-to-runtime-calls"
 
 	local bin="$TERMUX_PKG_BUILDDIR/bin"
 	mkdir -p "$bin"
