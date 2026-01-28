@@ -13,6 +13,11 @@ TERMUX_PKG_DEPENDS="gnustep-make, libcurl, libc++, libffi, libgmp, libgnutls, li
 # Some build environments only install TERMUX_PKG_BUILD_DEPENDS.
 TERMUX_PKG_BUILD_DEPENDS="libobjc2"
 TERMUX_PKG_BUILD_IN_SRC=true
+
+# Some build environments / GNUstep makefile setups may ignore env overrides;
+# pass via make command line to ensure -lobjc is on the link line.
+TERMUX_PKG_EXTRA_MAKE_ARGS="ADDITIONAL_OBJC_LIBS=-lobjc"
+
 TERMUX_PKG_EXTRA_CONFIGURE_ARGS="
 --with-default-config=$TERMUX_PREFIX/etc/GNUstep/GNUstep.conf
 --enable-procfs

@@ -32,6 +32,31 @@ termux_step_post_get_source() {
 }
 
 termux_step_pre_configure() {
+	# CMake's FindPkgConfig honors pkg-config output. If PKG_CONFIG_SYSROOT_DIR is
+	# set in the environment, pkg-config will prefix absolute include paths with it.
+	#
+	# Termux .pc files already contain full $TERMUX_PREFIX include/library paths,
+	# so a sysroot of $TERMUX_PREFIX would yield duplicated paths like:
+	#   $TERMUX_PREFIX$TERMUX_PREFIX/include
+	# which breaks CMake imported targets (e.g. PkgConfig::cares).
+	unset PKG_CONFIG_SYSROOT_DIR
+
+	# Ensure we always use a pkg-config that does not apply a sysroot, even if the
+	# outer environment re-exports PKG_CONFIG_SYSROOT_DIR later.
+	local wrapper_dir="$TERMUX_PKG_BUILDDIR/_wrapper/bin"
+	mkdir -p "$wrapper_dir"
+	local real_pkg_config
+	real_pkg_config="$(command -v pkg-config)"
+	cat > "$wrapper_dir/pkg-config" <<-'EOF'
+		#!/bin/sh
+		unset PKG_CONFIG_SYSROOT_DIR
+		exec "__REAL_PKG_CONFIG__" "$@"
+	EOF
+	sed -i "s|__REAL_PKG_CONFIG__|$real_pkg_config|" "$wrapper_dir/pkg-config"
+	chmod +x "$wrapper_dir/pkg-config"
+	export PKG_CONFIG="$wrapper_dir/pkg-config"
+	export PATH="$wrapper_dir:$PATH"
+
 	export OBJCXX="$CXX"
 
 	LDFLAGS+=" -landroid-glob -lpcrecpp -lz"
