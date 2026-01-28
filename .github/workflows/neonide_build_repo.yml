@@ -15,8 +15,12 @@ on:
   #  - cron: '30 * * * *'
   workflow_dispatch:
     inputs:
+      packages:
+        description: "Optional: explicit list of source package recipes to build (names under ./packages). Separate by space/comma/newline. Example: 'moria jsoncpp'. If empty, auto-selects packages."
+        required: false
+        default: ""
       batch_size:
-        description: "Max number of source packages to build per run (total across all shards)"
+        description: "Max number of source packages to build per run (total across all shards). Ignored when 'packages' is provided."
         required: false
         default: "80"
       shard_count:
@@ -203,7 +207,11 @@ jobs:
           declare -A IS_PRIORITY=()
           for p in "${PRIORITY[@]}"; do IS_PRIORITY["$p"]=1; done
 
+          # `inputs.*` is only available for workflow_dispatch. For push builds it is empty.
+          PACKAGES_INPUT='${{ inputs.packages }}'
+
           selected_all=()
+
           add_if_needed() {
             local pkg="$1"
             [ -z "$pkg" ] && return 0
@@ -214,24 +222,71 @@ jobs:
             selected_all+=("$pkg")
           }
 
-          # Add priority packages (if they exist as recipes)
+          add_if_requested() {
+            local pkg="$1"
+            [ -z "$pkg" ] && return 0
+            if [ -n "${EXCLUDE[$pkg]:-}" ]; then
+              echo "::error ::Requested package '$pkg' is in neonide-bootstrap-packages exclude list. Remove it from the request or update scripts/neonide-bootstrap-packages.txt." >&2
+              exit 1
+            fi
+            if [ -z "${HAS_RECIPE[$pkg]:-}" ]; then
+              echo "::error ::Requested package '$pkg' does not exist as a recipe directory: packages/$pkg" >&2
+              exit 1
+            fi
+            # Respect published-skip logic unless force_rebuild=true
+            if [ "$FORCE_REBUILD" != "true" ] && [ -n "${PUBLISHED[$pkg]:-}" ]; then
+              echo "INFO: Requested package '$pkg' is already published; skipping (set force_rebuild=true to rebuild)." >&2
+              return 0
+            fi
+            selected_all+=("$pkg")
+          }
+
+          # Fast lookup of existing recipes
           declare -A HAS_RECIPE=()
           for p in "${ALL_RECIPES[@]}"; do HAS_RECIPE["$p"]=1; done
-          for p in "${PRIORITY[@]}"; do
-            if [ -n "${HAS_RECIPE[$p]:-}" ]; then
-              add_if_needed "$p"
+
+          if [ -n "${PACKAGES_INPUT//[[:space:]]/}" ]; then
+            echo "INFO: Using manually provided package list (workflow_dispatch input 'packages')."
+
+            # Normalize: allow space/comma/newline separated values; allow passing 'packages/<name>' too.
+            mapfile -t REQUESTED < <(
+              printf '%s\n' "$PACKAGES_INPUT" \
+                | tr ',\t' '\n' \
+                | sed -E 's/#.*$//' \
+                | tr ' ' '\n' \
+                | sed '/^$/d' \
+                | sort -u
+            )
+
+            if [ "${#REQUESTED[@]}" -eq 0 ]; then
+              echo "::error ::Input 'packages' was provided but no valid package names were parsed."
+              exit 1
             fi
-          done
 
-          # Then add the rest in sorted order
-          for p in "${ALL_RECIPES[@]}"; do
-            [ -n "${IS_PRIORITY[$p]:-}" ] && continue
-            add_if_needed "$p"
-          done
+            for token in "${REQUESTED[@]}"; do
+              pkg="${token##*/}"
+              add_if_requested "$pkg"
+            done
+          else
+            # Auto-selection mode (existing behavior)
 
-          # Apply BATCH_SIZE across all shards (truncate before sharding)
-          if [ "${#selected_all[@]}" -gt "$BATCH_SIZE" ]; then
-            selected_all=("${selected_all[@]:0:$BATCH_SIZE}")
+            # Add priority packages (if they exist as recipes)
+            for p in "${PRIORITY[@]}"; do
+              if [ -n "${HAS_RECIPE[$p]:-}" ]; then
+                add_if_needed "$p"
+              fi
+            done
+
+            # Then add the rest in sorted order
+            for p in "${ALL_RECIPES[@]}"; do
+              [ -n "${IS_PRIORITY[$p]:-}" ] && continue
+              add_if_needed "$p"
+            done
+
+            # Apply BATCH_SIZE across all shards (truncate before sharding)
+            if [ "${#selected_all[@]}" -gt "$BATCH_SIZE" ]; then
+              selected_all=("${selected_all[@]:0:$BATCH_SIZE}")
+            fi
           fi
 
           # Shard distribution (round-robin)
