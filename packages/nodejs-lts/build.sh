@@ -174,6 +174,7 @@ termux_step_make_install() {
 termux_step_create_debscripts() {
 	cat <<- EOF > ./postinst
 	#!$TERMUX_PREFIX/bin/sh
+	export PATH=$TERMUX_PREFIX/bin:\$PATH
 	npm config set foreground-scripts true
 	EOF
 }
