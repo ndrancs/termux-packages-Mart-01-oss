@@ -155,7 +155,9 @@ __setup_termux_docker_rootfs() {
 }
 
 __setup_termux_envs() {
-	__pypy3_termux_envs="
+	# Environment for running commands inside the *host* termux-docker rootfs
+	# (x86_64/i686). Uses the prefix detected from that rootfs.
+	__pypy3_host_termux_envs="
 ANDROID_DATA=/data
 ANDROID_ROOT=/system
 HOME=$__pypy3_host_home
@@ -166,11 +168,24 @@ TMPDIR=$__pypy3_host_prefix/tmp
 TERM=$TERM
 TZ=UTC"
 
+	# Environment for running commands inside the *target* Termux rootfs
+	# (aarch64/arm) under /target-termux-rootfs. Uses the builder's TERMUX_PREFIX.
+	__pypy3_target_termux_envs="
+ANDROID_DATA=/data
+ANDROID_ROOT=/system
+HOME=$TERMUX_ANDROID_HOME
+LANG=en_US.UTF-8
+PATH=$TERMUX_PREFIX/bin
+PREFIX=$TERMUX_PREFIX
+TMPDIR=$TERMUX_PREFIX/tmp
+TERM=$TERM
+TZ=UTC"
+
 	__pypy3_run_on_host="
 env -i
 PROOT_NO_SECCOMP=1
 PROOT_TMP_DIR=/tmp
-$__pypy3_termux_envs
+$__pypy3_host_termux_envs
 $TERMUX_PKG_CACHEDIR/proot-bin/proot
 -b /proc -b /dev -b /sys
 -b $HOME
@@ -185,7 +200,7 @@ $TERMUX_PKG_CACHEDIR/proot-bin/proot
 env -i
 PROOT_NO_SECCOMP=1
 PROOT_TMP_DIR=/tmp
-$__pypy3_termux_envs
+$__pypy3_target_termux_envs
 $TERMUX_PKG_CACHEDIR/proot-bin/proot
 -b /data/:/target-termux-rootfs/data/
 -b $TERMUX_PREFIX/opt/aosp:/target-termux-rootfs/system/
@@ -194,7 +209,7 @@ $TERMUX_PKG_CACHEDIR/proot-bin/proot
 /usr/bin/env -i
 PROOT_NO_SECCOMP=1
 PROOT_TMP_DIR=/tmp
-$__pypy3_termux_envs
+$__pypy3_target_termux_envs
 $TERMUX_PKG_CACHEDIR/proot-bin/proot
 -b /proc -b /dev -b /sys
 -b /bin/bash
@@ -209,7 +224,7 @@ $TERMUX_PKG_CACHEDIR/proot-bin/proot
 env -i
 PROOT_NO_SECCOMP=1
 PROOT_TMP_DIR=/tmp
-$__pypy3_termux_envs
+$__pypy3_target_termux_envs
 $TERMUX_PKG_CACHEDIR/proot-bin/proot
 -b /proc -b /dev -b /sys
 -b $HOME

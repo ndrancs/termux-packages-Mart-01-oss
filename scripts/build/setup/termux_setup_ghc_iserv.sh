@@ -17,12 +17,15 @@ termux_setup_ghc_iserv() {
 
 	cat <<-EOF >"$TERMUX_ISERV_BIN/$TERMUX_ISERV_BIN_NAME"
 		#!/bin/bash
-		termux-proot-run $ghc_bin_dir/ghc-iserv "\$@"
+		# ghc-iserv binaries shipped with ghc-cross don't necessarily have an rpath
+		# for Termux libraries, so ensure the dynamic linker can find deps like
+		# libiconv.so.
+		termux-proot-run env LD_LIBRARY_PATH="$TERMUX_PREFIX/lib" $ghc_bin_dir/ghc-iserv "\$@"
 	EOF
 
 	cat <<-EOF >"$TERMUX_ISERV_BIN/${TERMUX_ISERV_BIN_NAME/iserv/iserv-dyn}"
 		#!/bin/bash
-		termux-proot-run $ghc_bin_dir/ghc-iserv-dyn "\$@"
+		termux-proot-run env LD_LIBRARY_PATH="$TERMUX_PREFIX/lib" $ghc_bin_dir/ghc-iserv-dyn "\$@"
 	EOF
 
 	chmod +x "$TERMUX_ISERV_BIN/$TERMUX_ISERV_BIN_NAME"
