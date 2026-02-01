@@ -3,8 +3,10 @@ TERMUX_PKG_DESCRIPTION="Allows you to easily manage large numbers of patches"
 TERMUX_PKG_LICENSE="GPL-2.0"
 TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="0.69"
-TERMUX_PKG_SRCURL=https://savannah.nongnu.org/download/quilt/quilt-${TERMUX_PKG_VERSION}.tar.gz
-TERMUX_PKG_SHA256=508170e9cfc9a545d167fed8d046adf5b3d68b0ba7c97caabccc0c4cb4f426d0
+# savannah.nongnu.org/download redirects to a generic /releases landing page and may
+# return HTML or varying mirror content. Use the canonical static releases host.
+TERMUX_PKG_SRCURL=https://download.savannah.gnu.org/releases/quilt/quilt-0.69.tar.gz
+TERMUX_PKG_SHA256=555ddffde22da3c86d1caf5a9c1fb8a152ac2b84730437bd39cc08849c9f4852
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_DEPENDS="coreutils, diffstat, gawk, graphviz, perl"
 TERMUX_PKG_PLATFORM_INDEPENDENT=true

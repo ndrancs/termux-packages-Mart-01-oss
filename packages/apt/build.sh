@@ -74,9 +74,13 @@ termux_step_pre_configure() {
 
 termux_step_post_make_install() {
 	{
-		echo "# The main NeonIDE repository"
+		echo "# NeonIDE repositories"
+		echo "# Primary (GitHub Pages)"
 		echo "deb https://mart-01-oss.github.io/pages/ stable main"
-                echo "deb https://github.com/Mart-01-oss/pages/releases/download/Package/ ./"
+		echo "# Secondary (alternate pages site, used when primary repo gets too large)"
+		echo "deb https://mart-01-oss.github.io/apt-repo/ stable main"
+		echo "# Large debs hosted as GitHub Release assets (flat repo)"
+		echo "deb https://github.com/Mart-01-oss/pages/releases/download/Package/ ./"
 	} > $TERMUX_PREFIX/etc/apt/sources.list
 
 	# apt-transport-tor

@@ -147,17 +147,24 @@ jobs:
             neonide-termux-topdir-aarch64-v1-${{ github.ref_name }}-
             neonide-termux-topdir-aarch64-v1-
 
-      - name: Fetch current published Packages index (sparse shallow clone)
+      - name: Fetch current published Packages indexes (sparse shallow clone)
         run: |
           set -euo pipefail
-          rm -rf pages-repo
+          rm -rf pages-repo apt-repo
 
-          # Public clone for read-only (avoid needing PAT here).
+          # Public clones for read-only (avoid needing PAT here).
           git clone --depth 1 --filter=blob:none --sparse https://github.com/Mart-01-oss/pages.git pages-repo
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/Mart-01-oss/apt-repo.git apt-repo
+
           (
             cd pages-repo
             # sparse-checkout uses cone mode by default; patterns must be directories.
             # Checkout the directory that contains Packages.
+            git sparse-checkout set dists/stable/main/binary-aarch64
+          )
+
+          (
+            cd apt-repo
             git sparse-checkout set dists/stable/main/binary-aarch64
           )
 
@@ -184,6 +191,7 @@ jobs:
           fi
 
           PAGES_PACKAGES="pages-repo/dists/stable/main/binary-aarch64/Packages"
+          APT_REPO_PACKAGES="apt-repo/dists/stable/main/binary-aarch64/Packages"
           RELEASE_PACKAGES_URL="https://github.com/Mart-01-oss/pages/releases/download/Package/Packages"
           RELEASE_PACKAGES_FILE="release-packages.txt"
 
@@ -204,12 +212,14 @@ jobs:
           # - GitHub Release flat repo Packages (large debs)
           declare -A PUBLISHED=()
           if [ "$FORCE_REBUILD" != "true" ]; then
-            if [ -f "$PAGES_PACKAGES" ]; then
-              while IFS= read -r p; do
-                [ -z "$p" ] && continue
-                PUBLISHED["$p"]=1
-              done < <((grep -E '^Package: ' "$PAGES_PACKAGES" || true) | sed -E 's/^Package: //' | sort -u)
-            fi
+            for idx_file in "$PAGES_PACKAGES" "$APT_REPO_PACKAGES"; do
+              if [ -f "$idx_file" ]; then
+                while IFS= read -r p; do
+                  [ -z "$p" ] && continue
+                  PUBLISHED["$p"]=1
+                done < <((grep -E '^Package: ' "$idx_file" || true) | sed -E 's/^Package: //' | sort -u)
+              fi
+            done
 
             # Fetch release Packages index (flat). This index is used for large debs.
             rm -f "$RELEASE_PACKAGES_FILE" || true
@@ -556,17 +566,18 @@ jobs:
           echo "Secret key is available."
           gpg --batch --list-secret-keys --keyid-format=long "$NEONIDE_GPG_KEY_ID" | sed -n '1,120p'
 
-      - name: Checkout pages repo (shallow)
+      - name: Checkout pages + apt-repo repos (shallow)
         env:
           PAGES_PAT: ${{ secrets.PAGES_PAT }}
         run: |
           set -euo pipefail
           if [ -z "${PAGES_PAT:-}" ]; then
-            echo "::error ::Missing secret PAGES_PAT (needs push access to Mart-01-oss/pages.git)"
+            echo "::error ::Missing secret PAGES_PAT (needs push access to Mart-01-oss/pages.git and Mart-01-oss/apt-repo.git)"
             exit 1
           fi
-          rm -rf pages-repo
+          rm -rf pages-repo apt-repo
           git clone --depth 1 "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/pages.git" pages-repo
+          git clone --depth 1 "https://x-access-token:${PAGES_PAT}@github.com/Mart-01-oss/apt-repo.git" apt-repo
 
       - name: Download all shard deb artifacts
         continue-on-error: true
@@ -655,11 +666,28 @@ jobs:
           set -euo pipefail
           bash ./scripts/neonide-publish-large-debs-to-release.sh
 
-      - name: Publish debs into pages APT repo (small debs only; no large deb indexes)
+      - name: Split small debs between pages repo and apt-repo (dedup + size limit)
+        if: ${{ steps.debs.outputs.has_small == 'true' }}
+        env:
+          DEBS_DIR: ${{ github.workspace }}/prebuilt-debs-small
+          PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
+          APT_REPO_DIR: ${{ github.workspace }}/apt-repo
+          APT_DIST: stable
+          APT_COMPONENT: main
+          APT_ARCH: aarch64
+          OUT_PAGES_DIR: ${{ github.workspace }}/prebuilt-debs-small-pages
+          OUT_APT_REPO_DIR: ${{ github.workspace }}/prebuilt-debs-small-apt-repo
+          # Default is 5 GiB; can be made configurable later.
+          PAGES_SIZE_LIMIT_GB: "5"
+        run: |
+          set -euo pipefail
+          bash ./scripts/neonide-split-small-debs-by-repo.sh
+
+      - name: Publish small debs into pages APT repo
         if: ${{ steps.debs.outputs.has_small == 'true' }}
         env:
           PAGES_REPO_DIR: ${{ github.workspace }}/pages-repo
-          DEBS_DIR: ${{ github.workspace }}/prebuilt-debs-small
+          DEBS_DIR: ${{ github.workspace }}/prebuilt-debs-small-pages
           APT_DIST: stable
           APT_COMPONENT: main
           APT_ARCH: aarch64
@@ -667,6 +695,24 @@ jobs:
           NEONIDE_LARGE_DEB_PUBLISH_MODE: pages
           NEONIDE_LARGE_DEB_THRESHOLD_MB: "99"
           # Do not prefix relative Filename entries with "./" in Packages.
+          NEONIDE_PACKAGES_PREFIX_DOTSLASH: "false"
+          NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
+          NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          bash ./scripts/neonide-publish-prebuilt-debs.sh
+
+      - name: Publish small debs into apt-repo APT repo
+        if: ${{ steps.debs.outputs.has_small == 'true' }}
+        env:
+          PAGES_REPO_DIR: ${{ github.workspace }}/apt-repo
+          DEBS_DIR: ${{ github.workspace }}/prebuilt-debs-small-apt-repo
+          APT_DIST: stable
+          APT_COMPONENT: main
+          APT_ARCH: aarch64
+          FORCE_OVERWRITE: "false"
+          NEONIDE_LARGE_DEB_PUBLISH_MODE: pages
+          NEONIDE_LARGE_DEB_THRESHOLD_MB: "99"
           NEONIDE_PACKAGES_PREFIX_DOTSLASH: "false"
           NEONIDE_GPG_KEY_ID: ${{ secrets.NEONIDE_GPG_KEY_ID }}
           NEONIDE_GPG_PASSPHRASE: ${{ secrets.NEONIDE_GPG_PASSPHRASE }}
@@ -682,7 +728,24 @@ jobs:
           set -euo pipefail
           cd pages-repo
           if [ -z "$(git status --porcelain=v1)" ]; then
-            echo "No changes to push."
+            echo "No changes to push (pages-repo)."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Update aarch64 repo (parallel batch build)"
+          git push origin main
+
+      - name: Commit & push apt-repo changes (if any)
+        if: ${{ steps.debs.outputs.has_debs == 'true' }}
+        env:
+          PAGES_PAT: ${{ secrets.PAGES_PAT }}
+        run: |
+          set -euo pipefail
+          cd apt-repo
+          if [ -z "$(git status --porcelain=v1)" ]; then
+            echo "No changes to push (apt-repo)."
             exit 0
           fi
           git config user.name "github-actions[bot]"
