@@ -12,6 +12,9 @@ TERMUX_PKG_PYTHON_COMMON_DEPS="maturin"
 termux_step_pre_configure() {
 	termux_setup_rust
 
+	# maturin/pyo3 needs this to determine the target platform for Android.
+	export ANDROID_API_LEVEL=$TERMUX_PKG_API_LEVEL
+
 	rm -rf _lib
 	mkdir -p _lib
 	cd _lib

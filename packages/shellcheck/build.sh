@@ -22,9 +22,25 @@ termux_step_post_configure() {
 	cabal get splitmix-0.1.3.1
 	mv splitmix{-*,}
 
-	for f in "$TERMUX_PKG_BUILDER_DIR"/splitmix-patches/*.patch; do
-		patch --silent -p1 -d splitmix < "$f"
-	done
+	# Patch splitmix for Android: splitmix's cbits-unix/init.c uses getentropy(),
+	# which is only available on Android API >= 28.
+	cat <<'PATCH' | patch --silent -p1 -d splitmix
+	diff --git a/cbits-unix/init.c b/cbits-unix/init.c
+	index 255b667..25a6ce7 100644
+	--- a/cbits-unix/init.c
+	+++ b/cbits-unix/init.c
+	@@ -8,6 +8,10 @@
+	 
+	 uint64_t splitmix_init() {
+	 	uint64_t result;
+	+#if (!defined(__ANDROID__) || __ANDROID_API__ >= 28)
+	 	int r = getentropy(&result, sizeof(uint64_t));
+	+#else
+	+	int r = -1;
+	+#endif
+	 	return r == 0 ? result : 0xfeed1000;
+	 }
+PATCH
 
 	cabal get entropy-0.4.1.11
 	mv entropy{-*,}

@@ -41,6 +41,12 @@ termux_step_host_build() {
 
 termux_step_configure() {
 	if [[ "$TERMUX_ON_DEVICE_BUILD" == "false" ]]; then
+		# termux-proot-run sets TZ=UTC by default. On some CI/proot setups bionic
+		# can't find tzdata for the IANA zone "UTC" and prints warnings like:
+		#   __bionic_open_tzdata: couldn't find any tzdata when looking for UTC!
+		# which breaks SBCL tests that compare exact output.
+		# Use a POSIX TZ string that doesn't require tzdata.
+		export TERMUX_PROOT_EXTRA_ENV_VARS="${TERMUX_PROOT_EXTRA_ENV_VARS:+$TERMUX_PROOT_EXTRA_ENV_VARS }TZ=UTC0"
 		termux_setup_proot
 	fi
 
