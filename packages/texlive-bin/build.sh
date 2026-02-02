@@ -49,7 +49,6 @@ RANLIB=ranlib
 --with-system-cairo
 --with-system-gd
 --with-system-gmp
---with-system-graphite2
 --with-system-harfbuzz
 --with-system-icu
 --with-system-libpaper

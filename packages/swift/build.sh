@@ -157,7 +157,10 @@ termux_step_make() {
 		--cross-compile-hosts=android-$SWIFT_ARCH
 		--cross-compile-deps-path=$(dirname $TERMUX_PREFIX)
 		--native-swift-tools-path=$SWIFT_BINDIR
-		--native-clang-tools-path=$SWIFT_BINDIR
+		# Use the NDK/standalone toolchain clang for C/C++ compilation when targeting Android.
+		# The Swift upstream toolchain clang does not ship Android runtime libraries
+		# (compiler-rt builtins and libunwind), causing CMake try-compile/link failures.
+		--native-clang-tools-path=$TERMUX_STANDALONE_TOOLCHAIN/bin
 		--cross-compile-append-host-target-to-destdir=False"
 	fi
 
