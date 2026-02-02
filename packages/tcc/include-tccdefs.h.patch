@@ -1,10 +1,11 @@
 --- a/include/tccdefs.h
 +++ b/include/tccdefs.h
-@@ -135,8 +135,10 @@
+@@ -135,8 +135,11 @@
      #define  BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD
      #define  __PRETTY_FUNCTION__ __FUNCTION__
      #define __has_builtin(x) 0
 +    #define __has_feature(x) 0
++    #define __building_module(x) 0
      #define _Nonnull
      #define _Nullable
 +    #define _Null_unspecified

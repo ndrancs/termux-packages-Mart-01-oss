@@ -5,6 +5,7 @@ TERMUX_PKG_MAINTAINER="@termux"
 TERMUX_PKG_VERSION="0.13.2"
 TERMUX_PKG_SRCURL="https://github.com/charliermarsh/ruff/archive/refs/tags/$TERMUX_PKG_VERSION.tar.gz"
 TERMUX_PKG_SHA256=008287603094fd8ddb98bcc7dec91300a7067f1967d6e757758f3da0a83fbb5c
+TERMUX_PKG_REVISION=1
 TERMUX_PKG_AUTO_UPDATE=true
 TERMUX_PKG_BUILD_IN_SRC=true
 TERMUX_PKG_PYTHON_COMMON_DEPS="maturin"
@@ -36,18 +37,29 @@ termux_step_make() {
 termux_step_make_install() {
 	install -Dm755 -t "$TERMUX_PREFIX/bin" "target/$CARGO_TARGET_NAME/release/ruff"
 
-	# ERROR: ruff-0.11.9-py3-none-linux_armv7l.whl is not a supported wheel on this platform.
-	# seems to be resolved by renaming the .whl file in this way
+	# maturin's wheel tags have changed over time. Recent releases produce Android-tagged
+	# wheels (e.g. android_24_arm64_v8a), but we install using host pip during packaging.
+	# Keep the previous approach of renaming the wheel to a linux_* tag so pip accepts it.
+	local _pip_arch="$TERMUX_ARCH"
 	if [[ "${TERMUX_ARCH}" == "arm" ]]; then
-		local _whl_arch="armv7l"
-	else
-		local _whl_arch="$TERMUX_ARCH"
+		# pip in our build environment rejects linux_armv7l, but accepts linux_arm
+		_pip_arch="arm"
 	fi
-	local _whl="ruff-$TERMUX_PKG_VERSION-py3-none-linux_$_whl_arch.whl"
-	if [[ "${TERMUX_ARCH}" == "arm" ]]; then
-		local _dest_whl="ruff-$TERMUX_PKG_VERSION-py3-none-linux_$TERMUX_ARCH.whl"
-		mv "target/wheels/$_whl" "target/wheels/$_dest_whl"
-		_whl="$_dest_whl"
+
+	shopt -s nullglob
+	local _wheels=("target/wheels/ruff-$TERMUX_PKG_VERSION-"*.whl)
+	shopt -u nullglob
+	if (( ${#_wheels[@]} == 0 )); then
+		termux_error_exit "No built wheel found in target/wheels for ruff $TERMUX_PKG_VERSION"
 	fi
-	pip install --no-deps --prefix=$TERMUX_PREFIX --force-reinstall "target/wheels/$_whl"
+	if (( ${#_wheels[@]} > 1 )); then
+		termux_error_exit "Multiple wheels found for ruff $TERMUX_PKG_VERSION: ${_wheels[*]}"
+	fi
+
+	local _dest_whl="target/wheels/ruff-$TERMUX_PKG_VERSION-py3-none-linux_${_pip_arch}.whl"
+	if [[ "${_wheels[0]}" != "$_dest_whl" ]]; then
+		mv -f "${_wheels[0]}" "$_dest_whl"
+	fi
+
+	pip install --no-deps --prefix=$TERMUX_PREFIX --force-reinstall "$_dest_whl"
 }
