@@ -50,6 +50,7 @@ RANLIB=ranlib
 --with-system-gd
 --with-system-gmp
 --with-system-harfbuzz
+--with-system-graphite2=no
 --with-system-icu
 --with-system-libpaper
 --with-system-lua
